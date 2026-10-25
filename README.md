@@ -26,7 +26,7 @@ Version **1.0.0-rc.1**: SIT release candidate. See [docs/release.md](docs/releas
 PHP 8.1 or later with `curl`, `json` and `openssl` (Windows builds of PHP ship all three).
 
 ```powershell
-composer require amwalpay/ecr-php:1.0.0-rc.1
+composer require amwalpay/ecr-php:dev-main
 ```
 
 Pin the exact version. Until the package is published, install the built artifact; see

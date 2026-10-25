@@ -38,7 +38,7 @@ POS team (POS-552); confirm them before SIT.
 ## 2. Install
 
 ```powershell
-composer require amwalpay/ecr-php:1.0.0-rc.1
+composer require amwalpay/ecr-php:dev-main
 ```
 
 Requirements: PHP 8.1+ with `curl`, `json`, `openssl`. See [compatibility.md](compatibility.md).
