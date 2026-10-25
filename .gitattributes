@@ -1,0 +1,11 @@
+* text=auto eol=lf
+*.php diff=php
+
+# Not part of the package: excluded from `composer archive` and GitHub dist zips.
+/tests export-ignore
+/tools export-ignore
+/examples export-ignore
+/.github export-ignore
+/phpunit.xml.dist export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore

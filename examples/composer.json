@@ -1,0 +1,31 @@
+{
+    "name": "amwalpay/ecr-php-example",
+    "description": "The Amwal ECR web sample (Wi-Fi and Web Service) in PHP, built on the amwalpay/ecr-php package artifact.",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.1",
+        "ext-openssl": "*",
+        "amwalpay/ecr-php": "1.0.0-rc.1",
+        "bacon/bacon-qr-code": "^3.0"
+    },
+    "repositories": [
+        {
+            "type": "artifact",
+            "url": "../dist",
+            "canonical": true,
+            "only": ["amwalpay/ecr-php"]
+        }
+    ],
+    "autoload": {
+        "classmap": ["src/"]
+    },
+    "scripts": {
+        "verify-artifact": "@php bin/verify-artifact.php",
+        "serve": "@php -S 127.0.0.1:5080 -t web/public web/public/index.php"
+    },
+    "config": {
+        "sort-packages": true,
+        "process-timeout": 0
+    }
+}

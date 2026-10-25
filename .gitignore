@@ -1,0 +1,11 @@
+/vendor/
+/composer.lock
+/.phpunit.cache/
+/.phpunit.result.cache
+/dist/
+/examples/vendor/
+/examples/composer.lock
+/examples/config.local.php
+/examples/var/
+/examples/fake.log
+/examples/out.txt

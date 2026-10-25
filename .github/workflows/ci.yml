@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+        php: ['8.1', '8.2', '8.3', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: curl, json, openssl, sockets, zip
+          ini-values: date.timezone=Asia/Muscat, zend.assertions=1
+          coverage: none
+
+      - name: Validate composer.json
+        run: composer validate --strict --no-check-lock --no-check-publish
+
+      - name: Install
+        run: composer update --no-interaction --no-progress --prefer-dist
+
+      - name: Lint
+        shell: bash
+        run: find src tests tools examples -name '*.php' -not -path '*/vendor/*' -print0 | xargs -0 -n1 php -l > /dev/null
+
+      - name: No secrets or card numbers
+        run: php tools/check-secrets.php
+
+      - name: Unit tests
+        run: vendor/bin/phpunit --testsuite unit
+
+      - name: Integration tests (real TCP, cURL, child processes)
+        run: vendor/bin/phpunit --testsuite integration
+
+      - name: Example web till tests (real server, workers, fake terminal)
+        run: vendor/bin/phpunit --testsuite example
+
+      - name: Build the artifact
+        run: php tools/build-artifact.php
+
+      - name: Example installs and runs on the artifact
+        working-directory: examples
+        shell: bash
+        env:
+          AMWAL_ECR_WIFI_KEY: 0123456789ABCDEF0123456789ABCDEF
+        run: |
+          composer install --no-interaction --no-progress
+          composer verify-artifact
+          php ../tools/fake-pos-server.php --key "$AMWAL_ECR_WIFI_KEY" --port 19100 > fake.log 2>&1 &
+          sleep 2
+          php cli/wifi-quickstart.php 127.0.0.1 19100 1.234 | tee out.txt
+          grep -q "Approved 1.234" out.txt
+
+      - name: Web till runs on the artifact (sale through a worker process)
+        working-directory: examples
+        shell: bash
+        env:
+          AMWAL_ECR_EXAMPLE_DATA: ${{ runner.temp }}/ecr-example
+        run: |
+          php -S 127.0.0.1:5080 -t web/public web/public/index.php > web.log 2>&1 &
+          sleep 2
+          B=http://127.0.0.1:5080
+          j() { curl -sf -H 'Content-Type: application/json' "$@"; }
+          j -X POST $B/api/terminals -d '{"name":"CI","serialNumber":"CI-1","ecrMode":2,"ipAddress":"127.0.0.1","port":"19100"}'
+          j -X PUT $B/api/settings/keys/wifi -d '{"value":"0123456789ABCDEF0123456789ABCDEF"}' > /dev/null
+          ID=$(j -X POST $B/api/transactions -d '{"terminalSerial":"CI-1","type":"Sale","amountDigits":"2500","merchantReference":"CI-ORDER-1"}' | php -r 'echo json_decode(stream_get_contents(STDIN))->id;')
+          for i in $(seq 1 40); do STATE=$(curl -sf $B/api/transactions/$ID | php -r 'echo json_decode(stream_get_contents(STDIN))->state;'); [ "$STATE" = completed ] && break; sleep 0.5; done
+          echo "state: $STATE"; [ "$STATE" = completed ]
+
+      - name: Keep the artifact
+        if: matrix.os == 'windows-2022' && matrix.php == '8.2'
+        uses: actions/upload-artifact@v4
+        with:
+          name: amwalpay-ecr-php
+          path: dist/
