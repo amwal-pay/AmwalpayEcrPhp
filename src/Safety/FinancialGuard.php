@@ -37,8 +37,8 @@ use AmwalPay\Ecr\Result\NotFound;
  *
  * Inquiries, receipts and close receipt move no money and are never blocked.
  * The Windows SDK leaves these rules to the till (its web sample enforces 1);
- * the PHP SDK enforces them by default. Turn off with
- * `EcrConfig(guardFinancialOperations: false)` only if your own system enforces
+ * so, to match it, the PHP SDK leaves them off by default. Turn them on with
+ * `EcrConfig(guardFinancialOperations: true)` unless your own system enforces
  * the same rules.
  */
 final class FinancialGuard

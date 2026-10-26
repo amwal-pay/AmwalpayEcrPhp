@@ -61,7 +61,7 @@ final class WebServiceHttpTest extends TestCase
         $this->http = new RewritingTransport(new CurlHttpTransport(), 'http://127.0.0.1:' . self::$hub?->port, $mode);
         $plan = EcrSessions::plan(
             new WebServiceLink('10001', '20002'),
-            new EcrConfig(...array_merge(['secureHashKey' => TestKeys::WEB_SERVICE, 'environment' => EcrEnvironment::UAT, 'stateDirectory' => $this->stateDir()], $config)),
+            new EcrConfig(...array_merge(['secureHashKey' => TestKeys::WEB_SERVICE, 'environment' => EcrEnvironment::UAT, 'stateDirectory' => $this->stateDir(), 'guardFinancialOperations' => true], $config)),
         );
         return EcrSessions::open('SN-WS-0001', $plan, null, $this->http);
     }
@@ -100,7 +100,8 @@ final class WebServiceHttpTest extends TestCase
 
     public function testEveryKindOfMissingAnswerIsAnUnknownOutcomeThatBlocksTheTerminal(): void
     {
-        foreach (['hub-timeout', 'error-500', 'error-503-explained', 'empty', 'html'] as $i => $mode) {
+        // A 5xx that explains itself is read as written (a decline), as in the Windows SDK.
+        foreach (['hub-timeout', 'error-500', 'empty', 'html'] as $i => $mode) {
             $session = $this->session($mode, stateDirectory: $this->stateDir() . '/' . $i);
             $failed = $session->sale('1.000', 'WS-U' . $i);
             self::assertInstanceOf(Failed::class, $failed, $mode);

@@ -7,96 +7,80 @@ namespace AmwalPay\Ecr;
 use AmwalPay\Ecr\Exception\InvalidRequestException;
 
 /**
- * Money, in exact decimal text. PHP has no decimal type and a float cannot
- * hold 1.005 exactly, so amounts enter the SDK as strings (`"1.234"`) or whole
- * numbers of major units (`5`), never as floats.
+ * Money, in exact decimal text: the PHP stand-in for the Windows SDK's
+ * `decimal`. Amounts enter as strings (`"1.234"`), integers (`5`) or floats
+ * (`1.234`, read through their shortest exact form), and are rounded half away
+ * from zero to the currency's decimal places, then sent as minor units:
+ * `"1.234"` OMR travels as `000000001234`.
  *
- * The SDK rounds half away from zero to the currency's decimal places, then
- * sends minor units: `"1.234"` OMR travels as `000000001234`.
+ * As in the Windows SDK, the amount itself is not judged: zero and negative
+ * amounts are sent as they are, and the terminal or the Hub answers them.
  */
 final class Amount
 {
-    /** The wire carries 12 digits of minor units (ISO 8583 field 4). */
-    public const MAX_MINOR_UNITS = 999_999_999_999;
-
     private function __construct(public readonly string $decimal)
     {
     }
 
     /** An amount in major units, e.g. `Amount::of('1.234')`. */
-    public static function of(string|int|self $amount): self
+    public static function of(string|int|float|self $amount): self
     {
         if ($amount instanceof self) {
             return $amount;
         }
         if (\is_int($amount)) {
-            if ($amount <= 0) {
-                throw new InvalidRequestException('An amount must be greater than zero');
-            }
             return new self((string) $amount);
         }
-        $text = trim($amount);
-        if (preg_match('/^[0-9]+(\.[0-9]+)?$/', $text) !== 1 && preg_match('/^\.[0-9]+$/', $text) !== 1) {
-            throw new InvalidRequestException(sprintf(
-                'An amount is a positive decimal in major units, such as "1.234", with no sign, exponent or separators: was "%s"',
-                $amount,
-            ));
+        if (\is_float($amount)) {
+            if (!is_finite($amount)) {
+                throw new InvalidRequestException('An amount must be a finite number');
+            }
+            // The shortest text that reads back as the same float: 1.005 stays 1.005.
+            $amount = json_encode($amount, \JSON_PRESERVE_ZERO_FRACTION);
         }
-        return new self(str_starts_with($text, '.') ? '0' . $text : $text);
+        $text = self::plain(trim($amount));
+        if ($text === null) {
+            throw new InvalidRequestException(sprintf('An amount is a decimal in major units, such as "1.234": was "%s"', $amount));
+        }
+        return new self($text);
     }
 
     /** An amount already in minor units: `Amount::fromMinorUnits(1234, 3)` is 1.234. */
     public static function fromMinorUnits(int $minorUnits, int $digits): self
     {
-        if ($minorUnits <= 0) {
-            throw new InvalidRequestException('An amount must be greater than zero');
-        }
         return new self(self::majorUnits((string) $minorUnits, $digits));
     }
 
     /**
      * Minor units for a currency with `$digits` decimal places, rounded half away
-     * from zero. Refuses anything that would round to nothing or not fit the wire.
+     * from zero, as the Web Service carries them (a 64-bit integer).
      *
-     * @throws InvalidRequestException
+     * @throws \OverflowException the amount does not fit 64 bits, as .NET's `checked` cast
      */
     public function toMinorUnits(int $digits): int
     {
-        [$whole, $fraction] = array_pad(explode('.', $this->decimal, 2), 2, '');
-        $whole = ltrim($whole, '0');
-        $kept = str_pad(substr($fraction, 0, $digits), $digits, '0');
-        $roundUp = \strlen($fraction) > $digits && $fraction[$digits] >= '5';
-
-        $digitsText = ltrim($whole . $kept, '0');
-        if ($roundUp) {
-            $digitsText = self::increment($digitsText === '' ? '0' : $digitsText);
+        $text = $this->minorUnitsText($digits);
+        $value = filter_var($text, \FILTER_VALIDATE_INT);
+        if ($value === false) {
+            throw new \OverflowException('Arithmetic operation resulted in an overflow.');
         }
-        $digitsText = $digitsText === '' ? '0' : $digitsText;
-
-        if (\strlen($digitsText) > 12) {
-            throw new InvalidRequestException(sprintf('The amount %s does not fit the 12 digits the terminal carries', $this->decimal));
-        }
-        $minor = (int) $digitsText;
-        if ($minor < 1) {
-            throw new InvalidRequestException(sprintf(
-                'The amount %s is less than the smallest unit of a currency with %d decimal places',
-                $this->decimal,
-                $digits,
-            ));
-        }
-        return $minor;
+        return $value;
     }
 
-    /** Twelve zero-padded digits of minor units, as the Wi-Fi and Web Service messages carry them. */
+    /**
+     * Minor units padded to 12 characters, as the Wi-Fi message carries them
+     * (ISO 8583 field 4). Like the Windows SDK, longer or negative values are
+     * padded as text and not refused.
+     */
     public function toWire(int $digits): string
     {
-        return str_pad((string) $this->toMinorUnits($digits), 12, '0', \STR_PAD_LEFT);
+        return str_pad($this->minorUnitsText($digits), 12, '0', \STR_PAD_LEFT);
     }
 
     /** The amount rounded to `$digits` places, e.g. `1.234`. */
     public function format(int $digits): string
     {
-        return self::majorUnits((string) $this->toMinorUnits($digits), $digits);
+        return self::majorUnits($this->minorUnitsText($digits), $digits);
     }
 
     public function __toString(): string
@@ -126,6 +110,50 @@ final class Amount
             $text = substr($text, 0, -$digits) . '.' . substr($text, -$digits);
         }
         return $negative && !$isZero ? '-' . $text : $text;
+    }
+
+    /**
+     * `Math.Round(amount, digits, MidpointRounding.AwayFromZero) * 10^digits`,
+     * truncated and written as an integer: `-1234`, `0`, `1234567890123`.
+     */
+    public function minorUnitsText(int $digits): string
+    {
+        $negative = str_starts_with($this->decimal, '-');
+        [$whole, $fraction] = array_pad(explode('.', ltrim($this->decimal, '-'), 2), 2, '');
+        $kept = str_pad(substr($fraction, 0, $digits), $digits, '0');
+        $roundUp = \strlen($fraction) > $digits && $fraction[$digits] >= '5';
+
+        $text = ltrim($whole . $kept, '0');
+        if ($roundUp) {
+            $text = self::increment($text === '' ? '0' : $text);
+        }
+        if ($text === '') {
+            return '0';
+        }
+        return $negative ? '-' . $text : $text;
+    }
+
+    /** `[-]digits[.digits]`, without a leading `+` or exponent, or null when `$text` is not a number. */
+    private static function plain(string $text): ?string
+    {
+        if (preg_match('/^([+-]?)([0-9]*)(?:\.([0-9]*))?(?:[eE]([+-]?[0-9]{1,4}))?$/', $text, $m) !== 1 || ($m[2] ?? '') . ($m[3] ?? '') === '') {
+            return null;
+        }
+        $whole = $m[2];
+        $fraction = $m[3] ?? '';
+        $exponent = (int) ($m[4] ?? 0);
+        if ($exponent > 0) {
+            $whole .= str_pad(substr($fraction, 0, $exponent), $exponent, '0');
+            $fraction = (string) substr($fraction, $exponent);
+        } elseif ($exponent < 0) {
+            $whole = str_pad($whole, -$exponent, '0', \STR_PAD_LEFT);
+            $fraction = substr($whole, $exponent) . $fraction;
+            $whole = substr($whole, 0, $exponent);
+        }
+        $whole = ltrim($whole, '0');
+        $fraction = rtrim($fraction, '0');
+        $result = ($whole === '' ? '0' : $whole) . ($fraction === '' ? '' : '.' . $fraction);
+        return $m[1] === '-' && $result !== '0' ? '-' . $result : $result;
     }
 
     /** Adds one to a string of decimal digits. */

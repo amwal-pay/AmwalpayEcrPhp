@@ -29,9 +29,6 @@ final class TcpEcrChannel implements EcrChannel
         private readonly int $port = EcrConfig::DEFAULT_PORT,
         ?float $connectTimeout = null,
     ) {
-        if ($host === '') {
-            throw new \InvalidArgumentException('A host is required');
-        }
         $this->connectTimeout = $connectTimeout ?? self::DEFAULT_CONNECT_TIMEOUT;
     }
 

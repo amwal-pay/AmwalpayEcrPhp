@@ -285,7 +285,7 @@ final class FinancialGuardTest extends TestCase
 
     public function testMarkResolvedNeedsAKnownReferenceAndANote(): void
     {
-        $guard = FinancialGuard::fromConfig(new EcrConfig(stateDirectory: $this->stateDir()));
+        $guard = FinancialGuard::fromConfig(new EcrConfig(stateDirectory: $this->stateDir(), guardFinancialOperations: true));
 
         $this->expectException(\InvalidArgumentException::class);
         $guard->markResolved('k', 'NOPE', 'note');

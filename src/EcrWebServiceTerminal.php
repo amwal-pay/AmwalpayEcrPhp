@@ -6,11 +6,9 @@ namespace AmwalPay\Ecr;
 
 use AmwalPay\Ecr\Exception\InvalidRequestException;
 use AmwalPay\Ecr\Failure\ConnectionLost;
-use AmwalPay\Ecr\Failure\Invalid;
 use AmwalPay\Ecr\Failure\Malformed;
 use AmwalPay\Ecr\Internal\EcrMessage;
 use AmwalPay\Ecr\Internal\MerchantReference;
-use AmwalPay\Ecr\Internal\ProtocolVersion;
 use AmwalPay\Ecr\Internal\Validate;
 use AmwalPay\Ecr\Internal\WireReaders;
 use AmwalPay\Ecr\Json\Json;
@@ -46,10 +44,10 @@ final class EcrWebServiceTerminal
     private readonly FinancialGuard $guard;
 
     /**
-     * A config still on the Wi-Fi answer wait (120 s) gets the Web Service one,
-     * so the client deadline (connect + answer) is
-     * {@see EcrConfig::WEB_SERVICE_CLIENT_TIMEOUT} however the terminal is made.
-     * Any other wait is kept.
+     * The config is used as given: the HTTP deadline is connect + answer
+     * timeout. {@see EcrSessions::plan()} raises the Wi-Fi answer wait to
+     * {@see EcrConfig::WEB_SERVICE_RESPONSE_TIMEOUT}; a terminal built directly
+     * keeps whatever the config says, as in the Windows SDK.
      *
      * @param HttpTransport|null $http How the HTTPS post is made. Null: cURL. The URL is always the SDK's.
      */
@@ -60,10 +58,7 @@ final class EcrWebServiceTerminal
         ?HttpTransport $http = null,
         ?FinancialGuard $guard = null,
     ) {
-        $this->config = $config->responseTimeout === EcrConfig::DEFAULT_RESPONSE_TIMEOUT
-            ? $config->with(responseTimeout: max(EcrConfig::WEB_SERVICE_CLIENT_TIMEOUT - $config->connectTimeout, 1.0))
-            : $config;
-        $config = $this->config;
+        $this->config = $config;
         $this->logger = $logger ?? EcrLogger::none();
         $this->api = new WebServiceApi($config, $this->logger, $http);
         $this->guard = $guard ?? FinancialGuard::fromConfig($config, $this->logger);
@@ -85,12 +80,12 @@ final class EcrWebServiceTerminal
         return $this->config;
     }
 
-    /** @param string|int|Amount $amount Major units as a string, e.g. "1.234". Never a float. */
-    public function sale(string|int|Amount $amount, string $merchantReference = ''): EcrResult
+    /** @param string|int|float|Amount $amount Major units, e.g. "1.234". */
+    public function sale(string|int|float|Amount $amount, string $merchantReference = ''): EcrResult
     {
         $ids = $this->backendIds();
         if ($ids === null) {
-            return self::invalidIds($merchantReference);
+            return self::invalidIds();
         }
         $minor = Amount::of($amount)->toMinorUnits($this->config->minorUnitDigits);
         return $this->money(EcrTransactionType::Sale, WebServiceOperation::Sale, $ids, $merchantReference, $minor);
@@ -100,37 +95,34 @@ final class EcrWebServiceTerminal
     {
         $ids = $this->backendIds();
         if ($ids === null) {
-            return self::invalidIds($merchantReference);
+            return self::invalidIds();
         }
-        $stan = Validate::receiptNumber($receiptNumber, 'Void');
-        return $this->money(EcrTransactionType::Void, WebServiceOperation::Void, $ids, $merchantReference, stan: $stan);
+        return $this->money(EcrTransactionType::Void, WebServiceOperation::Void, $ids, $merchantReference, stan: $receiptNumber);
     }
 
     /** @param string $transactionDate The original's day as `yyyyMMdd`. */
-    public function refund(string|int|Amount $amount, string $receiptNumber, string $transactionDate, string $merchantReference = ''): EcrResult
+    public function refund(string|int|float|Amount $amount, string $receiptNumber, string $transactionDate, string $merchantReference = ''): EcrResult
     {
         $ids = $this->backendIds();
         if ($ids === null) {
-            return self::invalidIds($merchantReference);
+            return self::invalidIds();
         }
         $minor = Amount::of($amount)->toMinorUnits($this->config->minorUnitDigits);
-        $stan = Validate::receiptNumber($receiptNumber, 'Refund');
-        $date = Validate::transactionDate($transactionDate, true, 'A refund');
-        return $this->money(EcrTransactionType::Refund, WebServiceOperation::Refund, $ids, $merchantReference, $minor, $stan, $date);
+        return $this->money(EcrTransactionType::Refund, WebServiceOperation::Refund, $ids, $merchantReference, $minor, $receiptNumber, $transactionDate);
     }
 
     public function inquire(string $receiptNumber, string $transactionDate, string $merchantReference = ''): EcrInquiry
     {
         $ids = $this->backendIds();
         if ($ids === null) {
-            return new InquiryFailed($merchantReference, new Invalid('merchantId and terminalId are required for Web Service ECR'));
+            return new InquiryFailed($merchantReference, new Malformed('merchantId and terminalId are required for Web Service ECR'));
         }
         [$reference, $body] = $this->build(
             EcrTransactionType::Inquiry,
             $ids,
             $merchantReference,
-            stan: Validate::receiptNumber($receiptNumber, 'An inquiry'),
-            originalTransactionDate: Validate::transactionDate($transactionDate, false, 'An inquiry'),
+            stan: $receiptNumber,
+            originalTransactionDate: $transactionDate,
         );
         return $this->readInquiry($this->api->postJson(WebServiceOperation::TransactionStatus, $body), $reference);
     }
@@ -143,19 +135,19 @@ final class EcrWebServiceTerminal
      */
     public function inquireByReference(string $originalReference, string $transactionDate = '', string $merchantReference = ''): EcrInquiry
     {
-        if (trim($originalReference) === '') {
+        if (Validate::isBlank($originalReference)) {
             throw new InvalidRequestException("An inquiry by reference needs the original's reference");
         }
         $original = MerchantReference::resolve($originalReference);
         $ids = $this->backendIds();
         if ($ids === null) {
-            return new InquiryFailed($merchantReference, new Invalid('merchantId and terminalId are required for Web Service ECR'));
+            return new InquiryFailed($merchantReference, new Malformed('merchantId and terminalId are required for Web Service ECR'));
         }
         [$reference, $body] = $this->build(
             EcrTransactionType::Inquiry,
             $ids,
             $merchantReference,
-            originalTransactionDate: Validate::transactionDate($transactionDate, false, 'An inquiry'),
+            originalTransactionDate: $transactionDate,
             originalMerchantReference: $original,
         );
         $inquiry = $this->readInquiry($this->api->postJson(WebServiceOperation::TransactionStatus, $body), $reference);
@@ -172,12 +164,12 @@ final class EcrWebServiceTerminal
      */
     public function closeReceipt(string $originalMerchantReference, string $merchantReference = ''): EcrReceiptClosed
     {
-        if (trim($originalMerchantReference) === '') {
-            return new CloseReceiptFailed($merchantReference, new Invalid('Close receipt needs the original merchant reference'));
+        if (Validate::isBlank($originalMerchantReference)) {
+            return new CloseReceiptFailed($merchantReference, new Malformed('Close receipt needs the original merchant reference'));
         }
         $ids = $this->backendIds();
         if ($ids === null) {
-            return new CloseReceiptFailed($merchantReference, new Invalid('merchantId and terminalId are required for Web Service ECR'));
+            return new CloseReceiptFailed($merchantReference, new Malformed('merchantId and terminalId are required for Web Service ECR'));
         }
         [$reference, $body] = WebServiceMessage::buildCloseReceipt(
             $ids[0],
@@ -192,10 +184,7 @@ final class EcrWebServiceTerminal
         Json::write($body);
         WebServiceHttpLog::operation($this->logger, EcrTransactionType::CloseReceipt->messageType(), $reference, $this->terminalSerial, $ids[0], $ids[1]);
         $response = $this->api->postJson(WebServiceOperation::CloseReceipt, $body);
-        $version = ProtocolVersion::problem($response);
-        return $version !== null
-            ? new CloseReceiptFailed($reference, new Malformed($version))
-            : WireReaders::toReceiptClosed($response, $reference);
+        return WireReaders::toReceiptClosed($response, $reference);
     }
 
     /** @param array{0: int, 1: int} $ids */
@@ -223,13 +212,7 @@ final class EcrWebServiceTerminal
             $minor === null ? '' : (string) $minor,
             $this->config->currencyCode,
             $this->config->connectTimeout + $this->config->responseTimeout,
-            function () use ($operation, $body, $reference): EcrResult {
-                $response = $this->api->postJson($operation, $body);
-                $version = ProtocolVersion::problem($response);
-                return $version !== null
-                    ? new Failed($reference, new Malformed($version))
-                    : WireReaders::toResult($response, $reference, $this->config->minorUnitDigits);
-            },
+            fn (): EcrResult => WireReaders::toResult($this->api->postJson($operation, $body), $reference, $this->config->minorUnitDigits),
         );
     }
 
@@ -241,16 +224,6 @@ final class EcrWebServiceTerminal
         if ($response->str('nextStep') === WebServiceApi::UNKNOWN_OUTCOME_STEP && $response->get('data') === null) {
             $reason = $response->str('message');
             return new InquiryFailed($reference, new ConnectionLost($reason !== '' ? $reason : 'The Web Service did not answer'));
-        }
-        // The Hub refused the lookup itself (HTTP 4xx/5xx, no record): a failed
-        // lookup, not a finding that nothing was charged.
-        if (!$response->flag('success') && $response->get('data') === null && preg_match('/^[45][0-9]{2}$/', $response->str('responseCode')) === 1) {
-            $reason = $response->str('message');
-            return new InquiryFailed($reference, new Invalid('The Web Service refused the inquiry (HTTP ' . $response->str('responseCode') . ($reason !== '' ? ': ' . $reason : '') . ')'));
-        }
-        $version = ProtocolVersion::problem($response);
-        if ($version !== null) {
-            return new InquiryFailed($reference, new Malformed($version));
         }
         return WireReaders::toInquiry($response, $reference, $this->config->minorUnitDigits);
     }
@@ -296,22 +269,23 @@ final class EcrWebServiceTerminal
         return $merchant === null || $terminal === null ? null : [$merchant, $terminal];
     }
 
-    /** A positive 64-bit integer written in digits, or null. */
+    /**
+     * The ID as a 64-bit integer, or null: `long.TryParse` with
+     * `NumberStyles.Integer`, so surrounding white space and a leading sign are
+     * accepted.
+     */
     public static function id(string $text): ?int
     {
-        $trimmed = trim($text);
-        if (preg_match('/^[0-9]{1,19}$/', $trimmed) !== 1) {
+        if (preg_match('/^([+-]?)([0-9]+)$/', trim($text, " \t\n\v\f\r"), $m) !== 1) {
             return null;
         }
-        $value = filter_var($trimmed, \FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
-        if ($value === false) {
-            $value = filter_var(ltrim($trimmed, '0') ?: '0', \FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
-        }
+        $digits = ltrim($m[2], '0');
+        $value = filter_var($m[1] === '-' ? '-' . ($digits === '' ? '0' : $digits) : ($digits === '' ? '0' : $digits), \FILTER_VALIDATE_INT);
         return $value === false ? null : $value;
     }
 
-    private static function invalidIds(string $merchantReference): Failed
+    private static function invalidIds(): Failed
     {
-        return new Failed($merchantReference, new Invalid('merchantId and terminalId must be set on EcrConfig for Web Service ECR'));
+        return new Failed('', new Malformed('merchantId and terminalId must be set on EcrConfig for Web Service ECR'));
     }
 }

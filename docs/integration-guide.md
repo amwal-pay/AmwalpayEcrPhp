@@ -67,7 +67,6 @@ shows how a till can confirm at run time which version it loaded.
 $config = new EcrConfig(
     ecrId: 'TILL-01',                                    // this till's name on the terminal's records
     secureHashKey: $wifiKey,                             // Wi-Fi key or Web Service key, by link
-    timezone: 'Asia/Muscat',                             // the till's local time for transactionDateTime
     stateDirectory: 'C:\\ProgramData\\MyTill\\ecr',      // durable, private: the guard's lock and journal
 );
 $later = $config->with(responseTimeout: 90);             // a validated copy
@@ -80,17 +79,17 @@ $later = $config->with(responseTimeout: 90);             // a validated copy
 | `minorUnitDigits` | `3` | 0 to 4. Another currency needs both settings. |
 | `port` | `9100` | Wi-Fi. The link's port wins. |
 | `connectTimeout` | `10` s | Wi-Fi connect; Web Service connect. |
-| `responseTimeout` | `120` s | Wi-Fi answer wait. Web Service raises an untouched 120 s to 150 s: 160 s with connect. |
+| `responseTimeout` | `120` s | Wi-Fi answer wait. `plan()` raises an untouched 120 s to 130 s for Web Service: 140 s with connect. |
 | `probeTimeout` | `3` s | Reachability probe. |
 | `secureHashKey` | empty | Even-length hex, at least 16 characters. `open()` requires one. |
 | `merchantId`, `terminalId` | empty | Set from `WebServiceLink` by `plan()`. |
 | `environment` | `SIT` | `EcrEnvironment::fromName('uat')` reads names, ignoring case; unknown names read as SIT. |
 | `autoInquireOnFailure` | `true` | Wi-Fi: follow a lost answer with one inquiry by reference. |
-| `guardFinancialOperations` | `true` | See [section 9](#9-the-financial-guard). |
+| `guardFinancialOperations` | `false` | Opt-in. See [section 9](#9-the-financial-guard). |
 | `stateDirectory` | system temp + `amwalpay-ecr` | **Set it in production.** The temp folder can be cleaned. |
 | `extendTimeLimit` | `true` | Raises `max_execution_time` before a payment wait. |
 | `caBundlePath` | none | Web Service TLS, when PHP has no CA bundle. |
-| `timezone` | PHP default | Set it, or set `date.timezone` in php.ini. |
+| `timezone` | machine's local time | Leave it unset: `transactionDateTime` uses the operating system's clock and time zone, as the Windows SDK's `DateTime.Now`. php.ini's `date.timezone` is ignored. Set it only to override the machine. |
 
 `EcrSessions::plan()` turns a link plus a config into a plan and **lists** problems rather than
 throwing, so a settings screen can show them. Pass the key as the operator typed it in
@@ -130,7 +129,7 @@ garbled answers, resets and old firmware.
 ```php
 $plan = EcrSessions::plan(
     new WebServiceLink(merchantId: '10001', terminalId: '20002'),
-    new EcrConfig(secureHashKey: $webServiceKey, environment: EcrEnvironment::UAT, timezone: 'Asia/Muscat'),
+    new EcrConfig(secureHashKey: $webServiceKey, environment: EcrEnvironment::UAT),
 );
 $session = EcrSessions::open('SN-WS-0001', $plan);
 ```
@@ -206,15 +205,15 @@ switch (true) {
 | `Unreachable` | false | No connection was made. Nothing sent. |
 | `Busy` | false | Another sale, void or refund is running on this terminal. Nothing sent. |
 | `Unresolved` | false | An earlier outcome on this terminal is unknown. Nothing sent. |
-| `Invalid` | false | Configuration problem found before sending (e.g. non-numeric IDs). |
 | `Timeout` | true | The request went out; no answer in time. |
 | `ConnectionLost` | true | The connection broke after the request went out. |
-| `Malformed` | true | The answer was unreadable, or declared a newer message version. |
+| `Malformed` | true | The answer was unreadable, or (Web Service) the IDs on the config are not numeric and nothing was sent. |
 | `Unauthenticated` | true | The answer was not signed with this key or answered another request. |
 
 An answer whose `nextStep` is `INQUIRE_BY_MERCHANT_REFERENCE` (a Hub timeout, `NO_RESPONSE`) arrives
-as `Failed` (`Timeout` or `ConnectionLost`), never as `Declined`. Every HTTP 5xx, empty or unreadable
-Hub answer, and every network failure is an unknown outcome.
+as `Failed` (`Timeout` or `ConnectionLost`), never as `Declined`. An empty or unreadable Hub answer,
+an HTTP 5xx with nothing readable, and every network failure is an unknown outcome. An HTTP error
+that explains itself is read as the Hub wrote it, as in the Windows SDK.
 
 Inquiries return `Found` (with `transaction`), `NotFound` (with `reason`) or `InquiryFailed`.
 `Found` means a record came back, not that money moved: read `transaction->status`
@@ -250,7 +249,8 @@ $session->markResolved('ORDER-1001-1', 'Terminal batch report 2026-10-25: not ch
 ## 9. The financial guard
 
 PHP serves each web request in its own process, so the rules a desktop till keeps in memory have to
-live on disk. The guard is on by default for every sale, void and refund:
+live on disk. The Windows SDK has no guard, so it is off by default; turn it on with
+`EcrConfig(guardFinancialOperations: true)` and it covers every sale, void and refund:
 
 | Rule | What the caller sees |
 |---|---|
@@ -272,7 +272,7 @@ $session->reconcile();         // inquire each; returns [reference => EcrInquiry
 - Several servers driving the same terminal: implement `Safety\TransactionJournal` and
   `Safety\TerminalLock` over your database or Redis, and pass the guard when opening:
   `EcrSessions::open($serial, $plan, guard: new FinancialGuard($journal, $lock))`.
-- Turn it off (`guardFinancialOperations: false`) only when your own system enforces the same rules.
+- Leave it off only when your own system enforces the same rules.
 
 ## 10. References, receipt numbers, amounts and dates
 
@@ -281,19 +281,21 @@ trimmed. One per attempt; an order number plus an attempt suffix fits (`ORDER-10
 refund each get their own. Blank: the SDK generates 12 hex characters and returns it on the result,
 but then you cannot save it before sending; prefer `EcrSessions::newMerchantReference()`.
 
-**Receipt number (STAN).** Digits only, 1 to 6 significant; sent padded (`24` → `000024`).
+**Receipt number (STAN).** As the Windows SDK: anything that is not a digit is dropped and the rest is
+sent padded (`24` → `000024`); only a blank one is refused.
 `Approved` does not carry it: read `Found->transaction->stan` from an inquiry by reference, or the
 printed receipt. Unique on one terminal for one day.
 
-**Amount.** Major units as a string (`'1.234'`) or a whole number (`5`); `Amount::of()` for a value
-object. Never a float: PHP floats cannot hold `1.005`. Rounded half away from zero to
-`minorUnitDigits`, sent as 12 digits of minor units. Zero, negative, exponent or separator forms and
-amounts that round to nothing are refused before sending. OMR keeps three decimals.
+**Amount.** Major units as a string (`'1.234'`), a whole number (`5`) or a float (read through its
+shortest exact form, so `1.005` stays `1.005`); `Amount::of()` for a value object. Rounded half away
+from zero to `minorUnitDigits`, sent as minor units padded to 12 digits, as the Windows SDK's
+`decimal`. The amount is not judged: zero and negative amounts are sent and the terminal or Hub
+answers them. Only text that is not a number is refused. OMR keeps three decimals.
 
 **Currency.** `currencyCode` is the ISO 4217 numeric code (`512` OMR, `840` USD) with
 `minorUnitDigits` to match.
 
-**Dates.** `yyyyMMdd`, a real day. Required for a refund; optional for inquiries and receipts.
+**Dates.** `yyyyMMdd`, sent as given. Pass one for a refund; optional for inquiries and receipts.
 `EcrTransaction::day()` turns `transactionTime` into one.
 
 ## 11. Timeouts, and long waits in PHP on Windows
@@ -301,7 +303,7 @@ amounts that round to nothing are refused before sending. OMR keeps three decima
 | Transport | Wait |
 |---|---|
 | Wi-Fi | connect 10 s, then answer 120 s. A lost answer can add one more wait for the automatic inquiry. |
-| Web Service | one HTTP deadline of connect + answer: **160 s** with the defaults. |
+| Web Service | one HTTP deadline of connect + answer: **140 s** through `plan()` with the defaults. |
 
 The wait covers card presentation and PIN. The SDK holds the PHP request open for all of it, so the
 web server must not end the request first. A request killed mid-wait leaves an unknown outcome.
@@ -320,7 +322,7 @@ web server must not end the request first. A request killed mid-wait leaves an u
 - **Windows Firewall.** Allow outbound TCP to the terminal's port; set the Wi-Fi network profile to
   Private.
 
-Run long payments from a CLI worker or queue if your web stack cannot hold a request for 160 s; the
+Run long payments from a CLI worker or queue if your web stack cannot hold a request for 140 s; the
 journal and lock work the same from any process.
 
 ## 12. Keys and logging
@@ -346,7 +348,7 @@ a transaction record. An exception thrown by your logger escapes the SDK call.
 ## 13. Building the till's screens
 
 - Offer **Inquire by reference**, never **Retry**, on an unknown outcome. Keep the reference on screen.
-- Show a countdown sized to the wait (120 s Wi-Fi, 160 s Web Service); do not impose a shorter one.
+- Show a countdown sized to the wait (120 s Wi-Fi, 130 s Web Service); do not impose a shorter one.
 - **Close receipt** is its own button on a completed sale, void or refund. Dismissing a dialog does
   not send it.
 - On `Approved` with `partialApproval`, show both amounts and collect the difference.

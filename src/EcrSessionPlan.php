@@ -65,11 +65,11 @@ final class EcrSessionPlan
         }
         if ($this->link instanceof WebServiceLink) {
             $summary = $this->config->environment->value;
-            if (trim($this->link->merchantId) !== '') {
-                $summary .= ' · merchant ' . trim($this->link->merchantId);
+            if ($this->link->merchantId !== '') {
+                $summary .= ' · merchant ' . $this->link->merchantId;
             }
-            if (trim($this->link->terminalId) !== '') {
-                $summary .= ' · terminal ' . trim($this->link->terminalId);
+            if ($this->link->terminalId !== '') {
+                $summary .= ' · terminal ' . $this->link->terminalId;
             }
             return $summary;
         }

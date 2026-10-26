@@ -19,7 +19,6 @@ use AmwalPay\Ecr\Internal\EcrMessage;
 use AmwalPay\Ecr\Internal\EcrMessageCodec;
 use AmwalPay\Ecr\Internal\LanLog;
 use AmwalPay\Ecr\Internal\MerchantReference;
-use AmwalPay\Ecr\Internal\ProtocolVersion;
 use AmwalPay\Ecr\Internal\SecureHash;
 use AmwalPay\Ecr\Internal\Validate;
 use AmwalPay\Ecr\Internal\WireReaders;
@@ -116,11 +115,11 @@ final class EcrTerminal
     /**
      * Takes a payment. The cardholder presents the card at the terminal.
      *
-     * @param string|int|Amount $amount Major units as a string, e.g. "1.234". Never a float.
+     * @param string|int|float|Amount $amount Major units, e.g. "1.234".
      * @param string $merchantReference This attempt's own reference. Save it before calling. Blank: generated.
      * @throws InvalidRequestException nothing was sent
      */
-    public function sale(string|int|Amount $amount, string $merchantReference = ''): EcrResult
+    public function sale(string|int|float|Amount $amount, string $merchantReference = ''): EcrResult
     {
         return $this->run(EcrTransactionType::Sale, amount: $amount, merchantReference: $merchantReference);
     }
@@ -147,7 +146,7 @@ final class EcrTerminal
      * @param string $transactionDate The original's day as `yyyyMMdd`: a receipt number is unique only within a day.
      */
     public function refund(
-        string|int|Amount $amount,
+        string|int|float|Amount $amount,
         string $receiptNumber,
         string $transactionDate,
         string $originalTerminalId = '',
@@ -175,11 +174,14 @@ final class EcrTerminal
         string $originalTerminalId = '',
         string $merchantReference = '',
     ): EcrInquiry {
+        if (Validate::isBlank($receiptNumber)) {
+            throw new InvalidRequestException('An inquiry needs a receipt number');
+        }
         $message = $this->build(
             EcrTransactionType::Inquiry,
-            stan: Validate::receiptNumber($receiptNumber, 'An inquiry'),
-            originalTerminalId: Validate::originalTerminalId($originalTerminalId),
-            originalDate: Validate::transactionDate($transactionDate, false, 'An inquiry'),
+            stan: $receiptNumber,
+            originalTerminalId: $originalTerminalId,
+            originalDate: $transactionDate,
             merchantReference: $merchantReference,
         );
         $answer = $this->exchange($message);
@@ -204,14 +206,14 @@ final class EcrTerminal
         string $originalTerminalId = '',
         string $merchantReference = '',
     ): EcrInquiry {
-        if (trim($originalReference) === '') {
+        if (Validate::isBlank($originalReference)) {
             throw new InvalidRequestException("An inquiry by reference needs the original's reference");
         }
         $original = MerchantReference::resolve($originalReference);
         $message = $this->build(
             EcrTransactionType::Inquiry,
-            originalTerminalId: Validate::originalTerminalId($originalTerminalId),
-            originalDate: Validate::transactionDate($transactionDate, false, 'An inquiry'),
+            originalTerminalId: $originalTerminalId,
+            originalDate: $transactionDate,
             originalReference: $original,
             merchantReference: $merchantReference,
         );
@@ -230,11 +232,14 @@ final class EcrTerminal
         string $originalTerminalId = '',
         string $merchantReference = '',
     ): EcrReceipt {
+        if (Validate::isBlank($receiptNumber)) {
+            throw new InvalidRequestException('A receipt needs a receipt number');
+        }
         $message = $this->build(
             EcrTransactionType::Receipt,
-            stan: Validate::receiptNumber($receiptNumber, 'A receipt'),
-            originalTerminalId: Validate::originalTerminalId($originalTerminalId),
-            originalDate: Validate::transactionDate($transactionDate, false, 'A receipt'),
+            stan: $receiptNumber,
+            originalTerminalId: $originalTerminalId,
+            originalDate: $transactionDate,
             merchantReference: $merchantReference,
         );
         $answer = $this->exchange($message);
@@ -266,31 +271,31 @@ final class EcrTerminal
      */
     public function run(
         EcrTransactionType $type,
-        string|int|Amount|null $amount = null,
+        string|int|float|Amount|null $amount = null,
         string $originalStan = '',
         string $originalTerminalId = '',
         string $originalDate = '',
         string $merchantReference = '',
     ): EcrResult {
         if (!$type->movesMoney()) {
-            throw new InvalidRequestException($type->displayName() . ' is not a money-moving operation; use inquire(), receipt() or closeReceipt()');
+            throw new InvalidRequestException($type->displayName() . ' is run with inquire()');
         }
         if ($type->requiresAmount() && $amount === null) {
             throw new InvalidRequestException($type->displayName() . ' needs an amount');
         }
-        $money = $type->requiresAmount() ? Amount::of($amount) : null;
-        $minor = $money?->toMinorUnits($this->config->minorUnitDigits);
-        $stan = $type->requiresOriginalStan() ? Validate::receiptNumber($originalStan, $type->displayName()) : '';
-        $date = $type === EcrTransactionType::Refund ? Validate::transactionDate($originalDate, true, 'A refund') : '';
+        if ($type->requiresOriginalStan() && Validate::isBlank($originalStan)) {
+            throw new InvalidRequestException($type->displayName() . " needs the original's receipt number");
+        }
+        $money = $amount === null ? null : Amount::of($amount);
 
         // Built, signed and serialised before the guard records anything, so a
         // request that cannot be built never leaves a "pending" entry behind.
         $message = $this->build(
             $type,
             amount: $money,
-            stan: $stan,
-            originalTerminalId: Validate::originalTerminalId($originalTerminalId),
-            originalDate: $date,
+            stan: $originalStan,
+            originalTerminalId: $originalTerminalId,
+            originalDate: $originalDate,
             merchantReference: MerchantReference::resolve($merchantReference),
         );
 
@@ -303,7 +308,7 @@ final class EcrTerminal
             $this->terminalKey(),
             $type,
             $message->merchantReference,
-            $minor === null ? '' : (string) $minor,
+            $money === null ? '' : $money->minorUnitsText($this->config->minorUnitDigits),
             $this->config->currencyCode,
             $budget,
             function () use ($message): EcrResult {
@@ -330,8 +335,7 @@ final class EcrTerminal
         $this->logger->debug('Lost the answer for ' . $reference . ' — asking what became of it');
         try {
             $found = $this->inquireByReference($reference);
-        } catch (\Throwable $e) {
-            $this->logger->debug('The follow-up inquiry for ' . $reference . ' failed: ' . $e->getMessage());
+        } catch (\Throwable) {
             $found = null;
         }
         return $plain->withRecovered($found);
@@ -401,25 +405,25 @@ final class EcrTerminal
      */
     private function untrustworthy(JsonObject $answer, EcrMessage $sent): ?Failure
     {
-        if ($this->config->signsMessages()) {
-            $presented = $answer->str(SecureHash::FIELD);
-            $verified = SecureHash::verify($answer, $this->config->secureHashKey);
-            if ($presented !== '') {
-                LanLog::verifyResponse($this->logger, SecureHash::KEY_LABEL, true, SecureHash::compose($answer), $presented, $verified);
-            }
-            if (!$verified) {
-                return new Unauthenticated("The answer was not signed with this terminal's key.");
-            }
-            // Binds the answer to this request: a correctly signed answer to an
-            // earlier transaction, replayed onto this connection, fails here.
-            if (!hash_equals($sent->nonce(), $answer->str('nonce'))) {
-                return new Unauthenticated(
-                    'The answer belongs to a different request. The transaction may still have completed — inquire before retrying.',
-                );
-            }
+        if (!$this->config->signsMessages()) {
+            return null;
         }
-        $version = ProtocolVersion::problem($answer);
-        return $version === null ? null : new Malformed($version);
+        $presented = $answer->str(SecureHash::FIELD);
+        $verified = SecureHash::verify($answer, $this->config->secureHashKey);
+        if ($presented !== '') {
+            LanLog::verifyResponse($this->logger, SecureHash::KEY_LABEL, true, SecureHash::compose($answer), $presented, $verified);
+        }
+        if (!$verified) {
+            return new Unauthenticated("The answer was not signed with this terminal's key.");
+        }
+        // Binds the answer to this request: a correctly signed answer to an
+        // earlier transaction, replayed onto this connection, fails here.
+        if (!hash_equals($sent->nonce(), $answer->str('nonce'))) {
+            return new Unauthenticated(
+                'The answer belongs to a different request. The transaction may still have completed — inquire before retrying.',
+            );
+        }
+        return null;
     }
 
     private static function toFailure(EcrIOException $e, string $endpoint): Failure

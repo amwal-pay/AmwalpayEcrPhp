@@ -48,7 +48,7 @@ use AmwalPay\Ecr\Link\LanLink;
 
 $plan = EcrSessions::plan(
     new LanLink('192.168.1.50', 9100),
-    new EcrConfig(secureHashKey: $wifiKey, timezone: 'Asia/Muscat', stateDirectory: 'C:\\ProgramData\\MyTill\\ecr'),
+    new EcrConfig(secureHashKey: $wifiKey, stateDirectory: 'C:\\ProgramData\\MyTill\\ecr'),
 );
 if (!$plan->isReady()) {
     exit(implode("\n", $plan->issues()));
@@ -64,7 +64,7 @@ use AmwalPay\Ecr\Link\WebServiceLink;
 
 $plan = EcrSessions::plan(
     new WebServiceLink(merchantId: '10001', terminalId: '20002'),
-    new EcrConfig(secureHashKey: $webServiceKey, environment: EcrEnvironment::UAT, timezone: 'Asia/Muscat'),
+    new EcrConfig(secureHashKey: $webServiceKey, environment: EcrEnvironment::UAT),
 );
 $session = EcrSessions::open('SN-WS-0001', $plan);
 ```
@@ -74,7 +74,7 @@ Web Service key are two different secrets; never hard-code either.
 
 ## Take a payment
 
-Amounts are major units as a **string** (`'1.234'`), never a float. Make the merchant reference
+Amounts are major units: a string (`'1.234'`), an int or a float, rounded like the Windows SDK's `decimal`. Make the merchant reference
 yourself and save it with the order **before** the call: it is how you find the payment if the
 answer is lost.
 
@@ -134,7 +134,7 @@ $session->closeReceipt(originalMerchantReference: 'ORDER-1001-1');    // the cas
   how it was confirmed with `$session->markResolved($reference, $note)`.
 - **Every Wi-Fi answer is verified** against the till's key and the request's nonce; an answer that
   fails is `Failure\Unauthenticated` (outcome unknown), never believed.
-- **Web Service waits up to 160 s** (connect + answer), longer than the Hub's own wait for card and PIN.
+- **Web Service waits up to 140 s** (10 s connect + 130 s answer), as the Windows SDK.
 - **Logs never carry the key**; card numbers, PIN, CVV and tokens are masked on every line.
 
 Run `$session->reconcile()` at start-up. Point `stateDirectory` at a durable, private folder.

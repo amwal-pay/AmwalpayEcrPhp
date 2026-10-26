@@ -21,7 +21,11 @@ final class EcrMessageCodec
     /** Frames a message ready to write to the socket. */
     public static function encode(EcrMessage $message): string
     {
-        return EcrFrames::wrap(Json::write($message->json));
+        $body = Json::write($message->json);
+        if (\strlen($body) > EcrFrames::MAX_BODY_BYTES) {
+            throw new EcrIOException('Request exceeds ' . EcrFrames::MAX_BODY_BYTES . ' bytes');
+        }
+        return EcrFrames::wrap($body);
     }
 
     /**
@@ -32,17 +36,12 @@ final class EcrMessageCodec
      */
     public static function parse(string $body): JsonObject
     {
+        // As `Encoding.UTF8.GetString`: an invalid byte becomes U+FFFD, not a refusal.
+        $payload = NetText::scrubUtf8($body);
         try {
-            return Json::parseObject($body);
+            return Json::parseObject($payload);
         } catch (JsonException $e) {
-            throw new EcrIOException('Terminal returned a message that is not valid JSON: ' . self::excerpt($body), 0, $e);
+            throw new EcrIOException('Terminal returned a message that is not valid JSON: ' . $payload, 0, $e);
         }
-    }
-
-    /** Enough of an unreadable answer to recognise it, never a whole payload. */
-    private static function excerpt(string $body): string
-    {
-        $text = preg_match('//u', $body) === 1 ? $body : bin2hex(substr($body, 0, 64));
-        return \strlen($text) > 200 ? substr($text, 0, 200) . '…' : $text;
     }
 }

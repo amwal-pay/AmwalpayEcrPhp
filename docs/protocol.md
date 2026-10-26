@@ -127,11 +127,11 @@ The SDK turns every failure into an envelope so it is read one way:
 | What happened | Envelope | Result |
 |---|---|---|
 | Network error, TLS failure, DNS | `NO_RESPONSE` + `nextStep: INQUIRE_BY_MERCHANT_REFERENCE` | `Failed` (`Timeout`: every `NO_RESPONSE` reads as one, as in the Windows SDK) |
-| Client deadline passed | `NO_RESPONSE`, "Timed out after 2m 40s", `nextStep` | `Failed` (`Timeout`) |
+| Client deadline passed | `NO_RESPONSE`, "Timed out after 2m 20s", `nextStep` | `Failed` (`Timeout`) |
 | Empty body | HTTP status as `responseCode`, `nextStep` | `Failed` (`ConnectionLost`) |
 | Not a single strict JSON object | HTTP status, "not valid JSON", `nextStep` | `Failed` (`ConnectionLost`) |
 | HTTP 5xx with nothing readable | status, reason phrase, `nextStep` | `Failed` (`ConnectionLost`) |
-| HTTP 5xx with a readable envelope | that envelope, plus `nextStep` | `Failed` |
+| HTTP 5xx with a readable envelope | that envelope, as read | as the envelope says (usually `Declined`) |
 | HTTP 4xx with a readable envelope | that envelope | `Declined` (the Hub refused it) |
 | HTTP 4xx with nothing readable | status, reason phrase, no `nextStep` | `Declined` |
 | Hub answers `nextStep: INQUIRE_BY_MERCHANT_REFERENCE` | as sent | `Failed` (`Timeout` when `NO_RESPONSE` or "timeout") |
@@ -143,4 +143,4 @@ For an inquiry, an envelope with `nextStep` and no `data` is `InquiryFailed`, ne
 | | Connect | Answer | Total |
 |---|---|---|---|
 | Wi-Fi | 10 s | 120 s (+ one more for the automatic inquiry after a lost answer) | |
-| Web Service | 10 s | 150 s | 160 s (one HTTP deadline) |
+| Web Service | 10 s | 130 s | 140 s (one HTTP deadline) |

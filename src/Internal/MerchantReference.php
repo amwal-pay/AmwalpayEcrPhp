@@ -28,22 +28,23 @@ final class MerchantReference
      */
     public static function resolve(?string $supplied): string
     {
-        $trimmed = trim((string) $supplied, " \t\n\r\0\x0B");
+        $trimmed = NetText::trim((string) $supplied);
         if ($trimmed === '') {
             return self::generate();
         }
-        if (\strlen($trimmed) > self::MAX_LENGTH) {
+        $length = NetText::length($trimmed);
+        if ($length > self::MAX_LENGTH) {
             throw new InvalidRequestException(sprintf(
                 'A merchant reference is at most %d characters, was %d',
                 self::MAX_LENGTH,
-                \strlen($trimmed),
+                $length,
             ));
         }
         // 0x21..0x7E is printable ASCII without the space.
         if (preg_match('/^[\x21-\x7E]+$/', $trimmed) !== 1 || strpbrk($trimmed, '&=') !== false) {
             throw new InvalidRequestException(sprintf(
                 'A merchant reference takes printable ASCII without spaces, \'&\' or \'=\': was "%s"',
-                addcslashes($trimmed, "\0..\37\177..\377"),
+                $trimmed,
             ));
         }
         return $trimmed;

@@ -17,4 +17,14 @@ final class EcrSdk
     public const PARITY_WITH = 'AmwalPay.Ecr 1.0.2 (.NET)';
 
     public const MINIMUM_PHP = '8.1.0';
+
+    /**
+     * The operating system's time zone, which `transactionDateTime` is stamped in
+     * unless {@see EcrConfig::$timezone} is set (the Windows SDK's `DateTime.Now`).
+     * PHP's own default, `date.timezone`, is used only when it cannot be read.
+     */
+    public static function localTimeZone(): \DateTimeZone
+    {
+        return Internal\LocalTime::zone();
+    }
 }

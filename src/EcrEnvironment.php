@@ -21,7 +21,7 @@ enum EcrEnvironment: string
     /** Reads an environment by name, ignoring case and surrounding space. Unknown names read as SIT. */
     public static function fromName(?string $name): self
     {
-        $trimmed = strtoupper(trim((string) $name));
+        $trimmed = strtoupper(Internal\NetText::trim((string) $name));
         return self::tryFrom($trimmed) ?? self::DEFAULT;
     }
 }

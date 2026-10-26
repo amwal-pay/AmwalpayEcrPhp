@@ -44,8 +44,8 @@ final class EcrSessions
 
 | Method | Returns | Notes |
 |---|---|---|
-| `plan()` | `EcrSessionPlan` | Validates `$link` and `$config` without opening a connection. Problems come back as the plan's `issues()` instead of exceptions, so a settings screen can show what is missing. `$rawSecureHashKey` is the key as the operator typed it: it is trimmed and checked here, and defaults to the config's key. For a `LanLink`, the link's port replaces the config's port. For a `WebServiceLink`, the merchant and terminal IDs are copied into the config. If the response timeout is still the Wi-Fi default, it becomes `EcrConfig::WEB_SERVICE_CLIENT_TIMEOUT - connectTimeout` (at least 1 s). A missing signing key is reported as an issue. Throws `\InvalidArgumentException` only for a link type it does not support. |
-| `open()` | `EcrOpenedSession` | Opens the transport the plan describes. There is one dispatch for Wi-Fi and Web Service, so sale, inquiry and recovery always build the same client. `$terminalSerial` is the terminal's serial number as registered. `$httpTransport` applies to Web Service only and sets how the HTTPS post is made; `null` uses cURL. `$logger` defaults to `EcrLogger::none()`. **Throws** `\InvalidArgumentException` if the plan has issues or the serial is blank. |
+| `plan()` | `EcrSessionPlan` | Validates `$link` and `$config` without opening a connection. Problems come back as the plan's `issues()` instead of exceptions, so a settings screen can show what is missing. `$rawSecureHashKey` is the key as the operator typed it: it is trimmed and checked here, and defaults to the config's key. For a `LanLink`, the link's port replaces the config's port. For a `WebServiceLink`, the merchant and terminal IDs are copied into the config. If the response timeout is still the Wi-Fi default, it becomes `EcrConfig::WEB_SERVICE_RESPONSE_TIMEOUT` (130 s). Hosts and IDs are kept as given; an ID is numeric when `long.TryParse` would read it (surrounding white space and a sign are allowed). A missing signing key is reported as an issue. Throws `\InvalidArgumentException` only for a link type it does not support. |
+| `open()` | `EcrOpenedSession` | Opens the transport the plan describes. There is one dispatch for Wi-Fi and Web Service, so sale, inquiry and recovery always build the same client. `$terminalSerial` is the terminal's serial number as registered. `$httpTransport` applies to Web Service only and sets how the HTTPS post is made; `null` uses cURL. `$logger` defaults to `EcrLogger::none()`. **Throws** `\InvalidArgumentException` if the plan has issues. The serial is sent as given. |
 | `lanTerminal()` | `EcrTerminal` | Builds the Wi-Fi terminal directly. Throws `\InvalidArgumentException` if the plan is not for Wi-Fi. |
 | `webServiceTerminal()` | `EcrWebServiceTerminal` | Builds the Web Service terminal directly. Throws `\InvalidArgumentException` if the plan is not for Web Service. |
 | `newMerchantReference()` | `string` | A fresh merchant reference in the SDK's own format: 12 uppercase hex characters. Generate it, save it with the order, then send it. |
@@ -133,7 +133,7 @@ final class EcrOpenedSession
 | `lanTerminal()` | `?EcrTerminal` | The Wi-Fi terminal behind the session, or `null` on Web Service. |
 | `webServiceTerminal()` | `?EcrWebServiceTerminal` | The Web Service terminal behind the session, or `null` on Wi-Fi. |
 | `probeReachability()` | `?EcrReachability` | Checks before a sale whether the Wi-Fi port answers. Always `null` on Web Service, because the Hub has no probe. |
-| `sale()` | `EcrResult` | `$amount` is in major units as a string, e.g. `"1.234"`, never a float. `$merchantReference` is this attempt's own reference: save it before calling. |
+| `sale()` | `EcrResult` | `$amount` is in major units: a string such as `"1.234"`, an int or a float. `$merchantReference` is this attempt's own reference: save it before calling. |
 | `void()` | `EcrResult` | `$originalTerminalId` is used on Wi-Fi only; Web Service uses the terminal in the plan. |
 | `refund()` | `EcrResult` | `$transactionDate` is the original transaction's day as `yyyyMMdd`. `$originalTerminalId` is used on Wi-Fi only. |
 | `inquire()` | `EcrInquiry` | Looks up a transaction by receipt number and date. `$originalTerminalId` is used on Wi-Fi only. |
@@ -180,8 +180,7 @@ final class EcrConfig
     public const DEFAULT_PORT = 9100;
     public const DEFAULT_RESPONSE_TIMEOUT = 120.0;
     public const DEFAULT_CONNECT_TIMEOUT = 10.0;
-    public const WEB_SERVICE_CLIENT_TIMEOUT = 160.0;
-    public const WEB_SERVICE_RESPONSE_TIMEOUT = self::WEB_SERVICE_CLIENT_TIMEOUT - self::DEFAULT_CONNECT_TIMEOUT;
+    public const WEB_SERVICE_RESPONSE_TIMEOUT = 130.0;
 
     public readonly string $secureHashKey;
 
@@ -198,7 +197,7 @@ final class EcrConfig
         public readonly string $terminalId = '',
         public readonly EcrEnvironment $environment = EcrEnvironment::SIT,
         public readonly bool $autoInquireOnFailure = true,
-        public readonly bool $guardFinancialOperations = true,
+        public readonly bool $guardFinancialOperations = false,
         public readonly ?string $stateDirectory = null,
         public readonly bool $extendTimeLimit = true,
         public readonly ?string $caBundlePath = null,
@@ -219,13 +218,12 @@ final class EcrConfig
 | `DEFAULT_PORT` | `9100` | The port Amwal POS terminals listen on for ECR requests. |
 | `DEFAULT_RESPONSE_TIMEOUT` | `120.0` | Wi-Fi wait for the terminal's answer: card present plus PIN. |
 | `DEFAULT_CONNECT_TIMEOUT` | `10.0` | Connect wait. |
-| `WEB_SERVICE_CLIENT_TIMEOUT` | `160.0` | The Web Service client deadline, connect plus answer. It is longer than the Hub's own wait for the terminal (card present plus PIN), so the Hub gives up and says so before this client does. |
-| `WEB_SERVICE_RESPONSE_TIMEOUT` | `150.0` | The answer budget `EcrSessions::plan()` gives a Web Service link when the caller left the Wi-Fi default. With the default connect timeout, the HTTP deadline is then `WEB_SERVICE_CLIENT_TIMEOUT`. |
+| `WEB_SERVICE_RESPONSE_TIMEOUT` | `130.0` | The answer wait `EcrSessions::plan()` gives a Web Service link when the caller left the Wi-Fi default (`EcrConfig.WebServiceResponseTimeout` in the Windows SDK). With the default connect timeout, the HTTP deadline is 140 s. |
 
 | Parameter | Type | Default | Meaning |
 |---|---|---|---|
 | `ecrId` | `string` | `'ECR01'` | Identifies this cash register to the terminal and on its records. |
-| `currencyCode` | `string` | `'512'` | ISO 4217 numeric code: `512` for OMR. Must be 3 digits. |
+| `currencyCode` | `string` | `'512'` | ISO 4217 numeric code: `512` for OMR. Sent as given. |
 | `minorUnitDigits` | `int` | `3` | Decimal places the currency has (0 to 4): 3 for OMR, 2 for USD. |
 | `port` | `int` | `9100` | The terminal's ECR listener port (1 to 65535). |
 | `connectTimeout` | `float` | `10.0` | Seconds to wait for the terminal to accept a connection. |
@@ -236,11 +234,11 @@ final class EcrConfig
 | `terminalId` | `string` | `''` | Backend terminal ID, for Web Service. |
 | `environment` | `EcrEnvironment` | `SIT` | Hub deployment for Web Service. |
 | `autoInquireOnFailure` | `bool` | `true` | After a lost Wi-Fi answer, sends one inquiry by merchant reference. |
-| `guardFinancialOperations` | `bool` | `true` | Allows one money-moving call per terminal at a time, requires unique references, and blocks new money movement while an earlier outcome is unknown. See `Safety\FinancialGuard`. |
+| `guardFinancialOperations` | `bool` | `false` | Opt-in (the Windows SDK has no guard). Allows one money-moving call per terminal at a time, requires unique references, and blocks new money movement while an earlier outcome is unknown. See `Safety\FinancialGuard`. |
 | `stateDirectory` | `?string` | `null` | Where the guard keeps its locks and journal. `null` uses the system temp folder. Use a durable, private folder in production. |
 | `extendTimeLimit` | `bool` | `true` | Raises PHP's `max_execution_time` so it cannot kill a payment mid-wait. |
 | `caBundlePath` | `?string` | `null` | CA bundle for the Web Service TLS check, for when PHP has none configured. |
-| `timezone` | `?string` | `null` | Time zone for `transactionDateTime`. `null` uses PHP's default time zone. Must be a valid identifier such as `Asia/Muscat`. |
+| `timezone` | `?string` | `null` | Time zone for `transactionDateTime`. `null` uses the machine's local time (the operating system's time zone, as the Windows SDK's `DateTime.Now`), not php.ini's `date.timezone`. When set, must be a valid identifier such as `Asia/Muscat`. |
 
 **Throws** `\InvalidArgumentException` for any value outside the rules above, including timeouts that are not positive and finite.
 
@@ -280,6 +278,9 @@ final class EcrSdk
     public const PROTOCOL_VERSION = 1;
     public const PARITY_WITH = 'AmwalPay.Ecr 1.0.2 (.NET)';
     public const MINIMUM_PHP = '8.1.0';
+
+    /** The machine's time zone, which `transactionDateTime` uses when `EcrConfig::$timezone` is null. */
+    public static function localTimeZone(): \DateTimeZone;
 }
 ```
 
@@ -349,7 +350,7 @@ final class WebServiceLink extends EcrLink
 ```
 
 - `EcrLink`: the base type, either `LanLink` (Wi-Fi/LAN) or `WebServiceLink` (the Amwal Hub over HTTPS).
-- `LanLink`: TCP to the IP address and port the terminal shows on its idle screen. The till and the terminal must be on the same network. `$host` is a host name or IP address only, with no scheme, path or spaces.
+- `LanLink`: TCP to the IP address and port the terminal shows on its idle screen. The till and the terminal must be on the same network. `$host` is a host name or IP address; only a blank one is a plan issue.
 - `WebServiceLink`: HTTPS to the Amwal Hub, which relays to the terminal configured for Web Service mode (`ecrMode: 4`). The Hub address comes from `EcrConfig::$environment` and is resolved by the SDK. `$merchantId` and `$terminalId` are the numeric backend IDs, e.g. `'10001'` and `'20002'`.
 
 ---
@@ -409,7 +410,7 @@ Constructor:
 | `terminalKey()` | `string` | Identifies this physical terminal to the guard's lock and journal (`wifi\|host\|port`). |
 | `isReachable()` | `bool` | Whether the terminal is listening. It proves the port is open, not that the terminal is idle. |
 | `probeReachability()` | `EcrReachability` | Asks the channel whether the terminal is there, before sending anything. Worth calling before a sale: a wrong address then gets an immediate answer instead of a failure the cardholder has to wait through. |
-| `sale()` | `EcrResult` | Takes a payment; the cardholder presents the card at the terminal. `$amount` is in major units as a string, never a float. `$merchantReference` is this attempt's own reference: save it before calling. When blank, one is generated. **Throws** `InvalidRequestException`, in which case nothing was sent. |
+| `sale()` | `EcrResult` | Takes a payment; the cardholder presents the card at the terminal. `$amount` is in major units: a string, an int or a float. `$merchantReference` is this attempt's own reference: save it before calling. When blank, one is generated. **Throws** `InvalidRequestException`, in which case nothing was sent. |
 | `void()` | `EcrResult` | Cancels an earlier transaction for its full amount, by its receipt number. `$originalTerminalId` is the terminal the original was taken on, when that is not this one. `$merchantReference` is the void's own reference, not the original's. |
 | `refund()` | `EcrResult` | Returns money against an earlier transaction, in full or in part. `$transactionDate` is the original's day as `yyyyMMdd`, because a receipt number is unique only within a day. |
 | `inquire()` | `EcrInquiry` | Asks what became of an earlier transaction by its receipt number, without touching it. Safe to repeat, and answered even while the terminal is busy. `$merchantReference` is the inquiry's own reference, not a way to look a transaction up. |
@@ -419,7 +420,7 @@ Constructor:
 | `run()` | `EcrResult` | Runs any money-moving operation. The typed methods above are the usual way in; this one is for a till that sets the type from its own form. **Throws** `InvalidRequestException` (nothing was sent) if the type does not move money, an amount is missing, or an argument is malformed. The request is built and signed before the guard records anything. |
 | `formatDuration()` | `string` | Formats seconds as `45s`, `2m` or `1m 30s`. |
 
-Inquiry, receipt and refund arguments are validated before sending, and a failed check throws `InvalidRequestException`. A receipt number must be 1 to 6 digits and not zero. A date must be a real day written `yyyyMMdd`. An original terminal ID is up to 32 printable characters. A merchant reference is at most 32 printable ASCII characters, with no spaces, `&` or `=`.
+Arguments follow the Windows SDK. A blank receipt number throws `InvalidRequestException` for a void, refund, inquiry or receipt; otherwise every character that is not a digit is dropped and the rest is padded to six (`24` → `000024`). Dates and the original terminal ID are sent as given when not blank; a refund without a date is sent without one. Amounts are rounded half away from zero and not judged: zero and negative amounts are sent. A merchant reference is at most 32 printable ASCII characters, with no spaces, `&` or `=`; text that is not a number is the only amount refused.
 
 When a Wi-Fi sale, void or refund loses its answer with an unknown outcome and `autoInquireOnFailure` is on, the SDK asks the terminal once, on a fresh connection, what became of the transaction. An inquiry only reads, so this follow-up cannot itself move money. The finding is attached to `Failed::$recovered`; it does not replace the failure, because the exchange still failed.
 
@@ -455,20 +456,20 @@ final class EcrWebServiceTerminal
 }
 ```
 
-Constructor: if the config is still on the Wi-Fi answer wait (120 s), it gets the Web Service one, so the client deadline (connect plus answer) is `EcrConfig::WEB_SERVICE_CLIENT_TIMEOUT` however the terminal is created. Any other wait is kept. `$http` sets how the HTTPS post is made; `null` uses cURL. The URL is always the SDK's. `$logger` defaults to `EcrLogger::none()`, and `$guard` to `FinancialGuard::fromConfig()`.
+Constructor: the config is used as given, so the HTTP deadline is `connectTimeout + responseTimeout` (130 s with the defaults). `EcrSessions::plan()` raises an untouched 120 s answer wait to 130 s (140 s deadline), as the Windows SDK. `$http` sets how the HTTPS post is made; `null` uses cURL. The URL is always the SDK's. `$logger` defaults to `EcrLogger::none()`, and `$guard` to `FinancialGuard::fromConfig()`.
 
 | Method | Returns | Notes |
 |---|---|---|
 | `terminalKey()` | `string` | Identifies this terminal to the guard (`ws\|environment\|merchantId\|terminalId`). |
-| `sale()` | `EcrResult` | `$amount` is in major units as a string, never a float. |
+| `sale()` | `EcrResult` | `$amount` is in major units: a string, an int or a float. |
 | `void()` | `EcrResult` | By receipt number. |
 | `refund()` | `EcrResult` | `$transactionDate` is the original's day as `yyyyMMdd`. |
 | `inquire()` | `EcrInquiry` | By receipt number and date. |
 | `inquireByReference()` | `EcrInquiry` | Looks up the transaction sent as `$originalReference`; use it for an outcome you never received. `$transactionDate` is optional; do not fill in "today", because the Hub filters by that day. Throws `InvalidRequestException` if `$originalReference` is blank or malformed. |
-| `closeReceipt()` | `EcrReceiptClosed` | Posts `/Ecr/closeReceipt` for the sale, void or refund sent as `$originalMerchantReference`. Call it from the Close receipt action; it is never sent automatically. `$merchantReference` is this close request's own ID; when blank, one is generated. A blank original returns `CloseReceiptFailed` with `Invalid`. |
-| `id()` | `?int` | A positive 64-bit integer written in digits, or `null`. |
+| `closeReceipt()` | `EcrReceiptClosed` | Posts `/Ecr/closeReceipt` for the sale, void or refund sent as `$originalMerchantReference`. Call it from the Close receipt action; it is never sent automatically. `$merchantReference` is this close request's own ID; when blank, one is generated. A blank original returns `CloseReceiptFailed` with `Malformed`. |
+| `id()` | `?int` | The ID as `long.TryParse` reads it (white space and a sign allowed), or `null`. |
 
-If `merchantId` or `terminalId` on the config is not numeric, money-moving calls return `Failed` with `Failure\Invalid`, inquiries return `InquiryFailed` with `Invalid`, and close receipt returns `CloseReceiptFailed` with `Invalid`. Nothing is sent in any of these cases. Malformed amounts, receipt numbers, dates and references throw `InvalidRequestException`. If a Hub transport failure comes back to an inquiry as an answer with no data, it is reported as `InquiryFailed` (`ConnectionLost`), never as `NotFound`.
+If `merchantId` or `terminalId` on the config is not numeric, money-moving calls return `Failed` (with an empty merchant reference) and `Failure\Malformed`, inquiries return `InquiryFailed` with `Malformed`, and close receipt returns `CloseReceiptFailed` with `Malformed`, as the Windows SDK. Nothing is sent in any of these cases. Receipt numbers and dates are sent as given (receipt numbers padded); a malformed reference or an amount that is not a number throws `InvalidRequestException`. If a Hub transport failure comes back to an inquiry as an answer with no data, it is reported as `InquiryFailed` (`ConnectionLost`), never as `NotFound`.
 
 ### `EcrReachability`
 
@@ -804,10 +805,10 @@ abstract class Failure
 | `Unauthenticated` | `unauthenticated` | `true` | The answer could not be shown to come from the terminal: it was not signed with this till's key, or it answers a different request. It is discarded, not believed. The terminal may have taken the payment: inquire before retrying. If this happens repeatedly, the key on the till and the key on the terminal differ. |
 | `Unreachable` | `unreachable` | `false` | Nothing is listening: wrong address, terminal off, or a different network. Nothing was sent. |
 | `Busy` | `busy` | `false` | Another sale, void or refund is already running on this terminal, from this process or another. Nothing was sent. |
-| `Invalid` | `invalid` | `false` | The request could not be built: a configuration problem found before anything was sent, such as non-numeric Web Service IDs. Nothing was sent. |
+| `Invalid` | `invalid` | `false` | No longer produced: the SDK reports these cases as `Malformed`, as the Windows SDK. Kept so stored results still read. |
 | `Unresolved` | `unresolved` | `false` | An earlier sale, void or refund on this terminal has an unknown outcome and must be reconciled by inquiry before a new one is sent. Nothing was sent. |
 
-`Busy`, `Invalid` and `Unresolved` exist only in the PHP SDK. `Busy` and `Unresolved` are needed because a PHP server runs many requests at once.
+`Busy`, `Invalid` and `Unresolved` exist only in the PHP SDK. `Busy` and `Unresolved` come only from the opt-in financial guard.
 
 ---
 
@@ -833,7 +834,7 @@ final class DuplicateMerchantReferenceException extends InvalidRequestException
 
 ## Safety
 
-The payment-safety rules a PHP till cannot leave to each individual request. They are on by default. Turn them off with `EcrConfig(guardFinancialOperations: false)` only if your own system enforces the same rules.
+Payment-safety rules for a PHP till that serves many requests at once. They are off by default, as the Windows SDK has no such guard. Turn them on with `EcrConfig(guardFinancialOperations: true)` when your own system does not already enforce them.
 
 ### `FinancialGuard`
 
@@ -1134,7 +1135,7 @@ final class WebServiceRequests
 - `$originalTransactionDate`: `yyyyMMdd`.
 - `transactionStatus()`: the inquiry. It looks up by receipt number when `$stan` is set, and otherwise by `$originalMerchantReference`.
 - `closeReceipt()`: the body for `/Ecr/closeReceipt`. `$originalMerchantReference` is the sale, void or refund being dismissed. A blank value throws `\InvalidArgumentException`.
-- A blank `$merchantReference` is generated. A blank `$transactionDateTime` uses the current time in PHP's default time zone. An empty `$secureHashKey` returns an unsigned body.
+- A blank `$merchantReference` is generated. A blank `$transactionDateTime` uses the machine's local time (`EcrSdk::localTimeZone()`). An empty `$secureHashKey` returns an unsigned body.
 - **Throws** `InvalidRequestException` for a malformed merchant reference, and `\InvalidArgumentException` if the key cannot sign.
 
 ```php
@@ -1224,7 +1225,7 @@ final class WebServiceApi
 
 - `UNKNOWN_OUTCOME_STEP`: the wire value that `NextStep::InquireByMerchantReference` is read from.
 - Constructor: `$http` set to `null` uses `CurlHttpTransport` with `$config->caBundlePath`.
-- `postJson()`: posts `$body` and returns the answer as JSON, never throwing for a transport failure. The deadline is `connectTimeout + responseTimeout`. A transport failure, an empty body or invalid JSON returns an envelope with `nextStep` set. An HTTP 5xx that explains itself but carries no `nextStep` gets one added, because the Hub may have failed after relaying the request to the terminal, so it is never a decline. An HTTP error with nothing readable gets `nextStep` only when its status is 5xx.
+- `postJson()`: posts `$body` and returns the answer as JSON, never throwing for a transport failure. The deadline is `connectTimeout + responseTimeout`. A transport failure, an empty body or invalid JSON returns an envelope with `nextStep` set. An HTTP error that explains itself (a `message` or `errorList`) is returned as read, as the Windows SDK. An HTTP error with nothing readable gets `nextStep` only when its status is 5xx.
 
 ### `Http\HttpTransport`
 

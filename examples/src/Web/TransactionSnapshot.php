@@ -13,7 +13,7 @@ use AmwalExample\Core\TransactionState;
  * version belong together.
  *
  * @param int $version Bumped on every change, so a poller can tell whether anything moved.
- * @param int $timeoutSeconds The configured response budget: 160 s on Web Service, 120 s on Wi-Fi.
+ * @param int $timeoutSeconds The configured response budget: 130 s on Web Service, 120 s on Wi-Fi.
  * @param int|null $remainingSeconds What is left while busy or fetching a receipt; null otherwise.
  */
 final class TransactionSnapshot

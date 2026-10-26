@@ -10,7 +10,6 @@ use AmwalPay\Ecr\EcrTransactionType;
 use AmwalPay\Ecr\EcrWebServiceTerminal;
 use AmwalPay\Ecr\EcrWireResponse;
 use AmwalPay\Ecr\Failure\ConnectionLost;
-use AmwalPay\Ecr\Failure\Invalid;
 use AmwalPay\Ecr\Failure\Malformed;
 use AmwalPay\Ecr\Failure\Timeout;
 use AmwalPay\Ecr\Log\EcrLogger;
@@ -170,12 +169,13 @@ final class WebServiceTest extends TestCase
         self::assertInstanceOf(Timeout::class, $result->failure);
     }
 
-    public function testA5xxThatExplainsItselfIsStillAnUnknownOutcome(): void
+    public function testA5xxThatExplainsItselfIsReadAsTheHubWroteIt(): void
     {
+        // As the Windows SDK: a readable envelope is returned as read, so this is a decline.
         $result = $this->terminal(FakeHttpTransport::reply(502, '{"success":false,"responseCode":"502","message":"Terminal did not respond"}'))->sale('1.000');
 
-        self::assertInstanceOf(Failed::class, $result);
-        self::assertTrue($result->failure->outcomeUnknown());
+        self::assertInstanceOf(Declined::class, $result);
+        self::assertSame('Terminal did not respond', $result->reason);
     }
 
     public function testARealDeclineAndARejectedRequestAreDeclinesWithNoFollowUp(): void
@@ -224,12 +224,11 @@ final class WebServiceTest extends TestCase
         self::assertSame('20260826', $refund->str('originalTransactionDate'));
     }
 
-    public function testAnswersFromANewerProtocolAreUnknownOutcomes(): void
+    public function testAnAnswerIsReadWhateverVersionItDeclares(): void
     {
         $result = $this->terminal(FakeHttpTransport::reply(200, '{"version":3,"success":true,"responseCode":"00"}'))->sale('1');
 
-        self::assertInstanceOf(Failed::class, $result);
-        self::assertInstanceOf(Malformed::class, $result->failure);
+        self::assertInstanceOf(Approved::class, $result);
     }
 
     // ── Inquiry and close receipt ────────────────────────────────────
@@ -244,12 +243,14 @@ final class WebServiceTest extends TestCase
         self::assertInstanceOf(InquiryFailed::class, $byReference);
     }
 
-    public function testAnInquiryTheHubRejectsIsAFailedLookupNeverNotFound(): void
+    public function testAnInquiryTheHubRejectsReadsAsTheWindowsSdkReadsIt(): void
     {
         foreach ([[401, '{}'], [400, '{"success":false,"responseCode":"400","message":"Invalid signature"}'], [404, '{}']] as [$status, $body]) {
             $inquiry = $this->terminal(FakeHttpTransport::reply($status, $body))->inquireByReference('ORD-1');
-            self::assertInstanceOf(InquiryFailed::class, $inquiry, 'HTTP ' . $status);
+            self::assertInstanceOf(NotFound::class, $inquiry, 'HTTP ' . $status);
         }
+        // Only an answer that never came is a failed lookup.
+        self::assertInstanceOf(InquiryFailed::class, $this->terminal(FakeHttpTransport::reply(503, ''))->inquireByReference('ORD-1'));
     }
 
     public function testARealNotFoundIsStillNotFoundAndAFoundRecordIsRead(): void
@@ -287,13 +288,13 @@ final class WebServiceTest extends TestCase
     public function testMissingOrNonNumericBackendIdsFailLocallyAndSendNothing(): void
     {
         $http = FakeHttpTransport::reply(200, '{}');
-        foreach ([['', ''], ['M1', 'T1'], ['-5', '7'], ['10001', '1.5']] as [$merchant, $terminal]) {
+        foreach ([['', ''], ['M1', 'T1'], ['10001', '1.5'], ['99999999999999999999', '7']] as [$merchant, $terminal]) {
             $ws = $this->terminal($http, new EcrConfig(merchantId: $merchant, terminalId: $terminal, stateDirectory: $this->stateDir()));
             $sale = $ws->sale('1', 'REF-1');
             $inquiry = $ws->inquire('24', '20260806', 'LOOKUP-1');
             self::assertInstanceOf(Failed::class, $sale);
-            self::assertInstanceOf(Invalid::class, $sale->failure);
-            self::assertFalse($sale->failure->outcomeUnknown(), 'nothing was sent');
+            self::assertInstanceOf(Malformed::class, $sale->failure);
+            self::assertSame('', $sale->merchantReference);
             self::assertStringContainsString('merchantId and terminalId', $sale->failure->message);
             self::assertInstanceOf(InquiryFailed::class, $inquiry);
             self::assertSame('LOOKUP-1', $inquiry->merchantReference);
@@ -314,12 +315,15 @@ final class WebServiceTest extends TestCase
         self::assertStringNotContainsStringIgnoringCase(TestKeys::WEB_SERVICE, $log);
     }
 
-    public function testIdsAreReadAsPositiveIntegers(): void
+    public function testIdsAreReadAsLongTryParseReadsThem(): void
     {
         self::assertSame(10001, EcrWebServiceTerminal::id(' 10001 '));
         self::assertSame(7, EcrWebServiceTerminal::id('007'));
-        self::assertNull(EcrWebServiceTerminal::id('-5'));
+        self::assertSame(-5, EcrWebServiceTerminal::id('-5'));
+        self::assertSame(5, EcrWebServiceTerminal::id('+5'));
+        self::assertSame(\PHP_INT_MAX, EcrWebServiceTerminal::id('9223372036854775807'));
         self::assertNull(EcrWebServiceTerminal::id('99999999999999999999'));
+        self::assertNull(EcrWebServiceTerminal::id('1.5'));
         self::assertNull(EcrWebServiceTerminal::id(''));
     }
 

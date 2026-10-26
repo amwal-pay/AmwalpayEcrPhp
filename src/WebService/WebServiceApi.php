@@ -95,12 +95,6 @@ final class WebServiceApi
             $wire = EcrWireResponse::parse($parsed);
             if ($wire->message !== '' || $wire->errorList !== []) {
                 WebServiceHttpLog::error($this->logger, $operation, 'HTTP ' . $status . ' — ' . $wire->displayMessage(), $elapsed);
-                // A 5xx means the Hub failed while handling the request, possibly
-                // after relaying it to the terminal: never a decline, even when it
-                // explains itself. (The Windows SDK returns the envelope as read.)
-                if ($status >= 500 && !$wire->success && $parsed->str('nextStep') === '') {
-                    $parsed = (clone $parsed)->set('nextStep', self::UNKNOWN_OUTCOME_STEP);
-                }
                 return $parsed;
             }
             $reason = $response->reasonPhrase !== '' ? $response->reasonPhrase : 'HTTP ' . $status;

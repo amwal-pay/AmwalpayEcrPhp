@@ -43,7 +43,7 @@ php -S 127.0.0.1:5091 -t web/public web/public/index.php
 | Address | `127.0.0.1:5080` (`composer serve`) | the `php -S` address, or your web server |
 | Allowed hosts | `127.0.0.1;localhost;[::1]` | `AMWAL_ECR_EXAMPLE_ALLOWED_HOSTS` |
 | Data folder | `%LOCALAPPDATA%\AmwalECR-PHP-Example` (`~/.local/share/...` elsewhere) | `AMWAL_ECR_EXAMPLE_DATA` |
-| Time zone | php.ini `date.timezone`, else `Asia/Muscat` | `AMWAL_ECR_EXAMPLE_TIMEZONE` |
+| Time zone | the machine's (as the Windows sample); php.ini `date.timezone` is ignored | `AMWAL_ECR_EXAMPLE_TIMEZONE` |
 | PHP CLI for workers | the running PHP (built-in server), or `php.exe` next to `php-cgi.exe` | `AMWAL_ECR_EXAMPLE_PHP` |
 
 The data folder holds `terminals.json`, `settings.dat` (environment and both signing keys,
@@ -86,7 +86,7 @@ inquiry, Close receipt, QR), plus:
 - **Transactions run on the server and the page polls.** `POST /api/transactions` starts a run
   (`202`) in a background PHP worker process; closing the tab or dropping a request never cancels a
   payment, only the explicit Cancel does, and a reloaded page finds its running or unread transaction.
-- **A countdown driven by the server**: `timeoutSeconds` (120 s Wi-Fi, 160 s Web Service) and
+- **A countdown driven by the server**: `timeoutSeconds` (120 s Wi-Fi, 130 s Web Service) and
   `remainingSeconds`, counted on the server.
 - **Cancel only stops waiting.** A cancelled sale, void or refund becomes an unknown outcome with
   **Inquire by reference**, never "cancelled".

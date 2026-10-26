@@ -37,7 +37,6 @@ $plan = EcrSessions::plan(
     new LanLink($host, $port),
     new EcrConfig(
         ecrId: 'TILL-01',
-        timezone: 'Asia/Muscat',
         stateDirectory: __DIR__ . '/../var/state',   // the SDK's lock and journal
     ),
     rawSecureHashKey: getenv('AMWAL_ECR_WIFI_KEY') ?: '',
@@ -97,7 +96,7 @@ switch (true) {
         break;
 
     case $result instanceof Failed:
-        // Nothing was sent: unreachable, busy, or an earlier unknown outcome to reconcile first.
+        // Nothing was sent: unreachable or, with the opt-in guard, busy or an earlier unknown outcome to reconcile first.
         echo "Not sent: {$result->failure->message}\n";
         break;
 }

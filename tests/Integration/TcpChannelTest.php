@@ -263,7 +263,7 @@ final class TcpChannelTest extends TestCase
         self::assertSame(9200, $channel->port());
         self::assertSame('10.0.0.5:9200', $channel->endpoint());
         self::assertSame(9100, (new TcpEcrChannel('10.0.0.5'))->port());
-        $this->expectException(\InvalidArgumentException::class);
-        new TcpEcrChannel('');
+        // As the Windows SDK: an empty host is not refused here; connecting fails instead.
+        self::assertSame('', (new TcpEcrChannel(''))->host());
     }
 }

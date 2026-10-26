@@ -8,8 +8,10 @@ declare(strict_types=1);
  * only for the SDK's own test suite, which drives this example against the SDK
  * source.
  *
- * Also sets the time zone when php.ini does not: the original-transaction date
- * defaults to "today", which must be the till's today.
+ * Also sets PHP's time zone to the machine's, as the Windows sample's
+ * `DateTime.Today` and `DateTime.Now`: the original-transaction date defaults to
+ * "today", and log lines are stamped in local time. php.ini's `date.timezone`
+ * (Europe/Berlin under XAMPP) is not the till's zone.
  */
 
 $autoload = getenv('AMWAL_ECR_EXAMPLE_AUTOLOAD') ?: __DIR__ . '/vendor/autoload.php';
@@ -20,6 +22,7 @@ if (!is_file($autoload)) {
 }
 require $autoload;
 
-if (ini_get('date.timezone') === '' || ini_get('date.timezone') === false) {
-    date_default_timezone_set(getenv('AMWAL_ECR_EXAMPLE_TIMEZONE') ?: 'Asia/Muscat');
+$exampleZone = getenv('AMWAL_ECR_EXAMPLE_TIMEZONE') ?: \AmwalPay\Ecr\EcrSdk::localTimeZone()->getName();
+if (in_array($exampleZone, DateTimeZone::listIdentifiers(DateTimeZone::ALL_WITH_BC), true)) {
+    date_default_timezone_set($exampleZone);
 }

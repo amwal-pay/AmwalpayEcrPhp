@@ -165,14 +165,9 @@ final class EcrTerminalTest extends TestCase
         $calls = [
             fn () => $terminal->sale('1', 'has space'),
             fn () => $terminal->sale('1', str_repeat('X', 33)),
-            fn () => $terminal->sale('0'),
-            fn () => $terminal->sale('-1.000'),
             fn () => $terminal->sale('abc'),
             fn () => $terminal->void(''),
             fn () => $terminal->void('  '),
-            fn () => $terminal->void('12a'),
-            fn () => $terminal->refund('1', '24', ''),
-            fn () => $terminal->refund('1', '24', '2026-08-06'),
             fn () => $terminal->inquire(' ', '20260806'),
             fn () => $terminal->inquireByReference(' '),
             fn () => $terminal->receipt('', '20260806'),
@@ -292,15 +287,26 @@ final class EcrTerminalTest extends TestCase
         self::assertInstanceOf(ReceiptFailed::class, $receipt);
     }
 
-    public function testAnAnswerFromANewerProtocolIsNotReadButReportedAsUnknown(): void
+    public function testWhatTheWindowsSdkSendsAsGivenIsSent(): void
     {
-        $failed = $this->terminal(FakeChannel::always('{"version":2,"success":true,"responseCode":"00","message":"Approved"}'))->sale('1');
+        foreach ([
+            fn (EcrTerminal $t) => $t->sale('0'),
+            fn (EcrTerminal $t) => $t->sale('-1.000'),
+            fn (EcrTerminal $t) => $t->void('12a'),
+            fn (EcrTerminal $t) => $t->refund('1', '24', ''),
+            fn (EcrTerminal $t) => $t->refund('1', '24', '2026-08-06'),
+        ] as $i => $call) {
+            $channel = FakeChannel::always('{"success":true,"responseCode":"00"}');
+            $call($this->terminal($channel, TestKeys::unsigned($this->stateDir() . '/' . $i)));
+            self::assertCount(1, $channel->requests, 'call ' . $i . ' was not sent');
+        }
+    }
 
-        self::assertInstanceOf(Failed::class, $failed);
-        self::assertInstanceOf(Malformed::class, $failed->failure);
-        self::assertStringContainsString('version 2', $failed->failure->message);
-        self::assertTrue($failed->failure->outcomeUnknown());
-        self::assertInstanceOf(Approved::class, $this->terminal(FakeChannel::always('{"version":1,"success":true,"responseCode":"00"}'), TestKeys::unsigned($this->stateDir() . '/v1'))->sale('1'));
+    public function testAnAnswerIsReadWhateverVersionItDeclares(): void
+    {
+        $approved = $this->terminal(FakeChannel::always('{"version":2,"success":true,"responseCode":"00","message":"Approved"}'))->sale('1');
+
+        self::assertInstanceOf(Approved::class, $approved);
     }
 
     // ── Reachability ─────────────────────────────────────────────────

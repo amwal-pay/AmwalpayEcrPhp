@@ -22,7 +22,7 @@ flowchart LR
 
 | Web sample (C#) | PHP sample | Notes |
 |---|---|---|
-| `wwwroot/` | `web/public/` | Copied file for file. Three sentences changed: the key-storage caption, the fake-terminal name, a comment about the 160 s Web Service wait. |
+| `wwwroot/` | `web/public/` | Copied file for file. Two sentences changed: the key-storage caption and the fake-terminal name. |
 | `Api/*.cs`, `Dtos.cs` | `src/Web/Api.php`, `src/Web/Views.php` | Same routes, shapes, status codes and messages. |
 | `Hosting/SecurityMiddleware.cs`, `Program.cs` | `src/Web/FrontController.php` | Same headers, CSP, guard, 64 KB cap, JSON 404, "Unexpected error". |
 | `Services/TransactionRegistry.cs` | `src/Web/TransactionRegistry.php` | Same state machine and API; files and worker processes instead of memory and `Task.Run` (section 2). |

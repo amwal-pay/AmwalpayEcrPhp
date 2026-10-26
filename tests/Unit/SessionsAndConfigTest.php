@@ -42,9 +42,9 @@ final class SessionsAndConfigTest extends TestCase
         self::assertSame('', $config->secureHashKey);
         self::assertSame(EcrEnvironment::SIT, $config->environment);
         self::assertTrue($config->autoInquireOnFailure);
-        self::assertTrue($config->guardFinancialOperations);
+        self::assertFalse($config->guardFinancialOperations, 'opt-in: the Windows SDK has no guard');
         self::assertFalse($config->signsMessages());
-        self::assertSame(160.0, EcrConfig::WEB_SERVICE_CLIENT_TIMEOUT);
+        self::assertSame(130.0, EcrConfig::WEB_SERVICE_RESPONSE_TIMEOUT);
     }
 
     /** @return iterable<string, array{array<string, mixed>, string}> */
@@ -54,8 +54,6 @@ final class SessionsAndConfigTest extends TestCase
         yield 'digits 5' => [['minorUnitDigits' => 5], 'minorUnitDigits'];
         yield 'port 0' => [['port' => 0], 'port'];
         yield 'port 65536' => [['port' => 65536], 'port'];
-        yield 'currency OMR' => [['currencyCode' => 'OMR'], 'currencyCode'];
-        yield 'currency 12' => [['currencyCode' => '12'], 'currencyCode'];
         yield 'timeout 0' => [['responseTimeout' => 0], 'responseTimeout'];
         yield 'timeout negative' => [['connectTimeout' => -1], 'connectTimeout'];
         yield 'timezone' => [['timezone' => 'Mars/Olympus'], 'timezone'];
@@ -153,7 +151,7 @@ final class SessionsAndConfigTest extends TestCase
         self::assertFalse($badKey->isReady());
         self::assertContains('Secure hash key must be an even-length hex string of at least 16 characters', $badKey->issues());
         self::assertSame('', $badKey->config->secureHashKey);
-        self::assertFalse($url->isReady());
+        self::assertTrue($url->isReady(), 'the Windows SDK does not judge the host');
     }
 
     public function testTheTypedKeyIsTrimmedAndTheLinksPortWins(): void
@@ -183,19 +181,22 @@ final class SessionsAndConfigTest extends TestCase
         self::assertStringContainsString('Port must be between 1 and 65535', implode("\n", $plan->issues()));
     }
 
-    public function testAWebServicePlanMergesTheIdsAndRaisesTheTimeoutTo160Seconds(): void
+    public function testAWebServicePlanMergesTheIdsAndRaisesTheAnswerWaitTo130Seconds(): void
     {
-        $plan = EcrSessions::plan(new WebServiceLink(' 10001 ', '20001'), new EcrConfig(secureHashKey: TestKeys::WEB_SERVICE, environment: EcrEnvironment::UAT));
+        $plan = EcrSessions::plan(new WebServiceLink('10001', '20001'), new EcrConfig(secureHashKey: TestKeys::WEB_SERVICE, environment: EcrEnvironment::UAT));
         $custom = EcrSessions::plan(new WebServiceLink('10001', '20001'), new EcrConfig(secureHashKey: TestKeys::WEB_SERVICE, responseTimeout: 90));
 
         self::assertTrue($plan->isReady());
         self::assertTrue($plan->usesWebService());
         self::assertSame('10001', $plan->config->merchantId);
         self::assertSame('20001', $plan->config->terminalId);
-        self::assertSame(160.0, $plan->config->connectTimeout + $plan->config->responseTimeout);
+        self::assertSame(130.0, $plan->config->responseTimeout);
+        self::assertSame(140.0, $plan->config->connectTimeout + $plan->config->responseTimeout);
         self::assertSame(WebServiceSecureHash::KEY_LABEL, $plan->signingKeyLabel());
         self::assertSame('UAT · merchant 10001 · terminal 20001', $plan->connectionSummary());
         self::assertSame(90.0, $custom->config->responseTimeout, 'a wait the caller chose is kept');
+        // long.TryParse: surrounding white space and a sign are numeric.
+        self::assertTrue(EcrSessions::plan(new WebServiceLink(' 10001 ', '+20001'), new EcrConfig(secureHashKey: TestKeys::WEB_SERVICE))->isReady());
     }
 
     public function testAWebServicePlanReportsMissingOrNonNumericIdsOnce(): void
@@ -228,7 +229,7 @@ final class SessionsAndConfigTest extends TestCase
         self::assertInstanceOf(EcrWebServiceTerminal::class, $web->webServiceTerminal());
     }
 
-    public function testAPlanWithIssuesOrABlankSerialCannotBeOpened(): void
+    public function testAPlanWithIssuesCannotBeOpenedButABlankSerialCan(): void
     {
         try {
             EcrSessions::open('SN1', EcrSessions::plan(new LanLink(''), new EcrConfig(secureHashKey: TestKeys::WIFI)));
@@ -236,8 +237,8 @@ final class SessionsAndConfigTest extends TestCase
         } catch (\InvalidArgumentException $e) {
             self::assertStringContainsString('unresolved issues', $e->getMessage());
         }
-        $this->expectException(\InvalidArgumentException::class);
-        EcrSessions::open('  ', EcrSessions::plan(new LanLink('127.0.0.1'), new EcrConfig(secureHashKey: TestKeys::WIFI)));
+        // The Windows SDK opens it and sends the serial as given.
+        self::assertTrue(EcrSessions::open('  ', EcrSessions::plan(new LanLink('127.0.0.1'), new EcrConfig(secureHashKey: TestKeys::WIFI)))->usesLocalTerminal());
     }
 
     public function testAWebServiceSessionCannotFetchAReceiptAndNeedsTheOriginalReferenceToCloseOne(): void

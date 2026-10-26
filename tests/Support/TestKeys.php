@@ -19,12 +19,12 @@ final class TestKeys
 
     public static function lan(string $stateDirectory, mixed ...$changes): EcrConfig
     {
-        return (new EcrConfig(secureHashKey: self::WIFI, stateDirectory: $stateDirectory))->with(...$changes);
+        return (new EcrConfig(secureHashKey: self::WIFI, stateDirectory: $stateDirectory, guardFinancialOperations: true))->with(...$changes);
     }
 
     public static function unsigned(string $stateDirectory, mixed ...$changes): EcrConfig
     {
-        return (new EcrConfig(stateDirectory: $stateDirectory, autoInquireOnFailure: false))->with(...$changes);
+        return (new EcrConfig(stateDirectory: $stateDirectory, autoInquireOnFailure: false, guardFinancialOperations: true))->with(...$changes);
     }
 
     public static function webService(string $stateDirectory, mixed ...$changes): EcrConfig
@@ -35,6 +35,7 @@ final class TestKeys
             terminalId: '20001',
             environment: EcrEnvironment::UAT,
             stateDirectory: $stateDirectory,
+            guardFinancialOperations: true,
         ))->with(...$changes);
     }
 }

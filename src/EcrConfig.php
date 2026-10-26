@@ -30,18 +30,12 @@ final class EcrConfig
     public const DEFAULT_CONNECT_TIMEOUT = 10.0;
 
     /**
-     * The Web Service client deadline, connect plus answer. Longer than the Hub's
-     * own wait for the terminal (card present plus PIN), so the Hub gives up and
-     * says so before this client does.
+     * HTTP read timeout for Web Service calls, which {@see EcrSessions::plan()}
+     * gives a Web Service link when the caller left the Wi-Fi default (120 s).
+     * Longer than the Wi-Fi wait: the Hub's wait includes card present plus PIN.
+     * With the default connect timeout the HTTP deadline is 140 s.
      */
-    public const WEB_SERVICE_CLIENT_TIMEOUT = 160.0;
-
-    /**
-     * The answer budget {@see EcrSessions::plan()} gives a Web Service link when
-     * the caller left the Wi-Fi default: with the default connect timeout the
-     * HTTP deadline is {@see WEB_SERVICE_CLIENT_TIMEOUT}.
-     */
-    public const WEB_SERVICE_RESPONSE_TIMEOUT = self::WEB_SERVICE_CLIENT_TIMEOUT - self::DEFAULT_CONNECT_TIMEOUT;
+    public const WEB_SERVICE_RESPONSE_TIMEOUT = 130.0;
 
     /** 64 bits is the shortest key worth calling a secret. */
     private const MIN_SECRET_LENGTH = 16;
@@ -61,13 +55,15 @@ final class EcrConfig
      * @param string $terminalId Backend terminal ID, for Web Service.
      * @param EcrEnvironment $environment Hub deployment for Web Service.
      * @param bool $autoInquireOnFailure Follow a lost Wi-Fi answer with one inquiry by merchant reference.
-     * @param bool $guardFinancialOperations One money-moving call per terminal at a time, unique references,
-     *        and no new money movement while an earlier outcome is unknown. See {@see Safety\FinancialGuard}.
+     * @param bool $guardFinancialOperations Opt in to one money-moving call per terminal at a time, unique
+     *        references, and no new money movement while an earlier outcome is unknown. Off by default, as the
+     *        Windows SDK has no such guard. See {@see Safety\FinancialGuard}.
      * @param string|null $stateDirectory Where the guard keeps its locks and journal. Null: the system temp folder.
      *        Use a durable, private folder in production.
      * @param bool $extendTimeLimit Raise PHP's `max_execution_time` so it cannot kill a payment mid-wait.
      * @param string|null $caBundlePath CA bundle for the Web Service TLS check, when PHP has none configured.
-     * @param string|null $timezone Time zone for `transactionDateTime`. Null: PHP's default time zone.
+     * @param string|null $timezone Time zone for `transactionDateTime`. Null: the machine's local time, as the
+     *        Windows SDK (`DateTime.Now`); php.ini's `date.timezone` is not used. Set it only to override the machine.
      */
     public function __construct(
         public readonly string $ecrId = 'ECR01',
@@ -82,7 +78,7 @@ final class EcrConfig
         public readonly string $terminalId = '',
         public readonly EcrEnvironment $environment = EcrEnvironment::SIT,
         public readonly bool $autoInquireOnFailure = true,
-        public readonly bool $guardFinancialOperations = true,
+        public readonly bool $guardFinancialOperations = false,
         public readonly ?string $stateDirectory = null,
         public readonly bool $extendTimeLimit = true,
         public readonly ?string $caBundlePath = null,
@@ -93,9 +89,6 @@ final class EcrConfig
         }
         if ($port < 1 || $port > 65535) {
             throw new \InvalidArgumentException('port must be between 1 and 65535');
-        }
-        if (preg_match('/^[0-9]{3}$/', $currencyCode) !== 1) {
-            throw new \InvalidArgumentException('currencyCode must be the 3-digit ISO 4217 numeric code, e.g. 512 for OMR');
         }
         foreach (['connectTimeout' => $connectTimeout, 'responseTimeout' => $responseTimeout, 'probeTimeout' => $probeTimeout] as $name => $seconds) {
             if (!is_finite($seconds) || $seconds <= 0) {

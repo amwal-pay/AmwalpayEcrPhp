@@ -69,7 +69,7 @@ final class ResponseEnvelope
             if (!Json::isScalar($element)) {
                 continue;
             }
-            $text = trim(Json::content($element));
+            $text = NetText::trim(Json::content($element));
             if ($text !== '') {
                 $result[] = $text;
             }

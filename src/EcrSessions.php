@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AmwalPay\Ecr;
 
 use AmwalPay\Ecr\Internal\MerchantReference;
+use AmwalPay\Ecr\Internal\Validate;
 use AmwalPay\Ecr\Link\EcrLink;
 use AmwalPay\Ecr\Link\LanLink;
 use AmwalPay\Ecr\Link\WebServiceLink;
@@ -46,11 +47,8 @@ final class EcrSessions
         $resolved = $config->with(secureHashKey: $key !== '' && $keyValid ? $key : '');
 
         if ($link instanceof LanLink) {
-            $host = trim($link->host);
-            if ($host === '') {
+            if (Validate::isBlank($link->host)) {
                 $issues[] = 'IP address is required for Wi-Fi ECR';
-            } elseif (preg_match('/[\s\/]/', $host) === 1 || str_contains($host, '://')) {
-                $issues[] = 'IP address must be a host name or IP address only, without a scheme, path or spaces';
             }
             if ($link->port < 1 || $link->port > 65535) {
                 $issues[] = 'Port must be between 1 and 65535 (default ' . EcrConfig::DEFAULT_PORT . ')';
@@ -59,25 +57,26 @@ final class EcrSessions
                 $resolved = $resolved->with(port: $link->port);
             }
         } elseif ($link instanceof WebServiceLink) {
-            $merchantId = trim($link->merchantId);
-            $terminalId = trim($link->terminalId);
-            if ($merchantId === '') {
+            $merchantId = $link->merchantId;
+            $terminalId = $link->terminalId;
+            if (Validate::isBlank($merchantId)) {
                 $issues[] = 'Merchant ID is required for Web Service';
-            } elseif (EcrWebServiceTerminal::id($merchantId) === null) {
+            }
+            if (Validate::isBlank($terminalId)) {
+                $issues[] = 'Terminal ID is required for Web Service';
+            }
+            if (!Validate::isBlank($merchantId) && EcrWebServiceTerminal::id($merchantId) === null) {
                 $issues[] = 'Merchant ID must be numeric';
             }
-            if ($terminalId === '') {
-                $issues[] = 'Terminal ID is required for Web Service';
-            } elseif (EcrWebServiceTerminal::id($terminalId) === null) {
+            if (!Validate::isBlank($terminalId) && EcrWebServiceTerminal::id($terminalId) === null) {
                 $issues[] = 'Terminal ID must be numeric';
             }
-            // The Wi-Fi answer wait becomes the Web Service one unless the caller
-            // chose their own: the client deadline (connect + answer) then
-            // outlasts the Hub's own wait for card and PIN.
+            // Web Service HTTP read timeout: 130 s unless the caller already
+            // overrode the Wi-Fi default (120 s).
             $responseTimeout = $resolved->responseTimeout === EcrConfig::DEFAULT_RESPONSE_TIMEOUT
-                ? EcrConfig::WEB_SERVICE_CLIENT_TIMEOUT - $resolved->connectTimeout
+                ? EcrConfig::WEB_SERVICE_RESPONSE_TIMEOUT
                 : $resolved->responseTimeout;
-            $resolved = $resolved->with(merchantId: $merchantId, terminalId: $terminalId, responseTimeout: max($responseTimeout, 1.0));
+            $resolved = $resolved->with(merchantId: $merchantId, terminalId: $terminalId, responseTimeout: $responseTimeout);
         } else {
             throw new \InvalidArgumentException('Unsupported ECR link: ' . $link::class);
         }
@@ -98,7 +97,7 @@ final class EcrSessions
      * @param HttpTransport|null $httpTransport Web Service only: how the HTTPS post is made. Null: cURL.
      * @param FinancialGuard|null $guard The payment-safety guard. Null: file-based, from the config. Pass one
      *        built on a shared journal and lock when several servers drive the same terminal.
-     * @throws \InvalidArgumentException the plan has issues, or the serial is blank
+     * @throws \InvalidArgumentException the plan has issues
      */
     public static function open(
         string $terminalSerial,
@@ -109,9 +108,6 @@ final class EcrSessions
     ): EcrOpenedSession {
         if (!$plan->isReady()) {
             throw new \InvalidArgumentException('Cannot open a session with unresolved issues: ' . implode(', ', $plan->issues()));
-        }
-        if (trim($terminalSerial) === '') {
-            throw new \InvalidArgumentException('The terminal serial number is required');
         }
         $logger ??= EcrLogger::none();
         if ($plan->usesLan()) {
@@ -128,7 +124,7 @@ final class EcrSessions
         if (!$plan->link instanceof LanLink) {
             throw new \InvalidArgumentException('The plan is not for Wi-Fi ECR');
         }
-        return new EcrTerminal(trim($plan->link->host), trim($terminalSerial), $plan->config, $logger, $guard);
+        return new EcrTerminal($plan->link->host, $terminalSerial, $plan->config, $logger, $guard);
     }
 
     public static function webServiceTerminal(
@@ -141,7 +137,7 @@ final class EcrSessions
         if (!$plan->usesWebService()) {
             throw new \InvalidArgumentException('The plan is not for Web Service ECR');
         }
-        return new EcrWebServiceTerminal(trim($terminalSerial), $plan->config, $logger, $httpTransport, $guard);
+        return new EcrWebServiceTerminal($terminalSerial, $plan->config, $logger, $httpTransport, $guard);
     }
 
     /**

@@ -6,6 +6,7 @@ namespace AmwalPay\Ecr\WebService;
 
 use AmwalPay\Ecr\EcrTransactionType;
 use AmwalPay\Ecr\Internal\EcrMessage;
+use AmwalPay\Ecr\Internal\LocalTime;
 use AmwalPay\Ecr\Internal\MerchantReference;
 use AmwalPay\Ecr\Internal\Validate;
 use AmwalPay\Ecr\Json\JsonObject;
@@ -80,7 +81,7 @@ final class WebServiceMessage
                 break;
             case EcrTransactionType::Inquiry:
                 $invoiceStan = Validate::paddedStan($stan);
-                $byReference = $invoiceStan === '' && trim($originalMerchantReference) !== '';
+                $byReference = $invoiceStan === '' && !Validate::isBlank($originalMerchantReference);
                 // By STAN: empty originalMerchantReference. By reference: set it.
                 $body->set('stan', $invoiceStan)
                     ->set('originalTransactionDate', $originalTransactionDate)
@@ -111,7 +112,7 @@ final class WebServiceMessage
         string $originalMerchantReference = '',
         string $transactionDateTime = '',
     ): array {
-        if (trim($originalMerchantReference) === '') {
+        if (Validate::isBlank($originalMerchantReference)) {
             throw new \InvalidArgumentException('Close receipt needs the original merchant reference');
         }
         $reference = MerchantReference::resolve($merchantReference);
@@ -130,10 +131,10 @@ final class WebServiceMessage
         return [$reference, $secureHashKey === '' ? $body : WebServiceSecureHash::withHash($body, $secureHashKey)];
     }
 
-    /** PHP's default time zone; the terminal passes a timestamp in the configured one. */
+    /** The machine's local time, as `DateTime.Now`; the terminal passes a timestamp in the configured one. */
     private static function now(): string
     {
-        return (new \DateTimeImmutable('now'))->format('YmdHis');
+        return LocalTime::stamp();
     }
 
     private static function padded(?int $minorUnits): string

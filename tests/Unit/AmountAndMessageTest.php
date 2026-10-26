@@ -6,6 +6,7 @@ namespace AmwalPay\Ecr\Tests\Unit;
 
 use AmwalPay\Ecr\Amount;
 use AmwalPay\Ecr\EcrConfig;
+use AmwalPay\Ecr\EcrSdk;
 use AmwalPay\Ecr\EcrTransactionType;
 use AmwalPay\Ecr\Exception\InvalidRequestException;
 use AmwalPay\Ecr\Internal\EcrMessage;
@@ -49,28 +50,49 @@ final class AmountAndMessageTest extends TestCase
         self::assertSame('1.230', Amount::of('1.23')->format(3));
     }
 
-    /** @return iterable<string, array{string|int, int}> */
-    public static function badAmounts(): iterable
+    /** @return iterable<string, array{string|int|float, int, string}> */
+    public static function amountsTheWindowsSdkSendsAsTheyAre(): iterable
     {
-        yield 'zero' => ['0', 3];
-        yield 'zero int' => [0, 3];
-        yield 'negative' => ['-1.000', 3];
-        yield 'negative int' => [-5, 3];
-        yield 'rounds to nothing' => ['0.0004', 3];
-        yield 'exponent' => ['1e3', 3];
-        yield 'thousands separator' => ['1,000.000', 3];
-        yield 'comma decimal' => ['1,5', 3];
-        yield 'currency sign' => ['OMR 1.000', 3];
-        yield 'empty' => ['', 3];
-        yield 'too large' => ['1000000000.000', 3];
-        yield 'NaN' => ['NaN', 3];
+        yield 'zero' => ['0', 3, '000000000000'];
+        yield 'zero int' => [0, 3, '000000000000'];
+        yield 'negative' => ['-1.000', 3, '0000000-1000'];
+        yield 'negative int' => [-5, 3, '0000000-5000'];
+        yield 'rounds to nothing' => ['0.0004', 3, '000000000000'];
+        yield 'exponent' => ['1e3', 3, '000001000000'];
+        yield 'more than 12 digits' => ['1000000000.000', 3, '1000000000000'];
+        yield 'float' => [1.234, 3, '000000001234'];
+        yield 'float half away from zero' => [1.005, 2, '000000000101'];
     }
 
-    #[DataProvider('badAmounts')]
-    public function testAnAmountThatIsNotAPositiveFigureInTheCurrencysPrecisionIsRefused(string|int $amount, int $digits): void
+    #[DataProvider('amountsTheWindowsSdkSendsAsTheyAre')]
+    public function testAmountsAreSentAsTheWindowsSdkWritesThemWithoutJudgingThem(string|int|float $amount, int $digits, string $wire): void
+    {
+        self::assertSame($wire, Amount::of($amount)->toWire($digits));
+    }
+
+    /** @return iterable<string, array{string|float}> */
+    public static function notNumbers(): iterable
+    {
+        yield 'thousands separator' => ['1,000.000'];
+        yield 'comma decimal' => ['1,5'];
+        yield 'currency sign' => ['OMR 1.000'];
+        yield 'empty' => [''];
+        yield 'NaN' => ['NaN'];
+        yield 'NaN float' => [NAN];
+    }
+
+    #[DataProvider('notNumbers')]
+    public function testTextThatIsNotANumberIsRefused(string|float $amount): void
     {
         $this->expectException(InvalidRequestException::class);
-        Amount::of($amount)->toMinorUnits($digits);
+        Amount::of($amount);
+    }
+
+    public function testTheWebServiceAmountIsA64BitIntegerAsTheWindowsSdksCheckedCast(): void
+    {
+        self::assertSame(-1000, Amount::of('-1')->toMinorUnits(3));
+        $this->expectException(\OverflowException::class);
+        Amount::of('99999999999999999999')->toMinorUnits(3);
     }
 
     /** @return iterable<array{string, int, string}> */
@@ -154,10 +176,28 @@ final class AmountAndMessageTest extends TestCase
         self::assertStringStartsWith(substr($muscat, 0, 8), $message->json->str('transactionDateTime'));
     }
 
+    public function testTheStampIsTheMachinesLocalTimeNotPhpsDefaultZone(): void
+    {
+        $default = date_default_timezone_get();
+        // A zone no till runs in: the stamp must not follow it.
+        date_default_timezone_set('Pacific/Kiritimati');
+        try {
+            $message = EcrMessage::build(EcrTransactionType::Sale, new EcrConfig(), 'TW9', Amount::of('1.23'));
+        } finally {
+            date_default_timezone_set($default);
+        }
+
+        $local = (new \DateTimeImmutable('now', EcrSdk::localTimeZone()))->format('YmdHi');
+        self::assertNotSame('Pacific/Kiritimati', EcrSdk::localTimeZone()->getName());
+        self::assertSame(substr($local, 0, 10), substr($message->json->str('transactionDateTime'), 0, 10));
+    }
+
     public function testAReferenceIsTheCallersOwnTrimmedOrAFreshOne(): void
     {
         self::assertSame('ORDER-2026-0817-001', MerchantReference::resolve('ORDER-2026-0817-001'));
         self::assertSame('ORDER-1', MerchantReference::resolve('  ORDER-1  '));
+        // string.Trim(): Unicode white space goes, NUL stays and is refused.
+        self::assertSame('ORDER-1', MerchantReference::resolve("\xC2\xA0ORDER-1\f"));
         self::assertMatchesRegularExpression('/^[0-9A-F]{12}$/', MerchantReference::resolve('   '));
         self::assertNotSame(MerchantReference::resolve(''), MerchantReference::resolve(''));
         self::assertSame(str_repeat('X', 32), MerchantReference::resolve(str_repeat('X', 32)));
@@ -173,6 +213,7 @@ final class AmountAndMessageTest extends TestCase
         yield 'newline' => ["ORDER\n1"];
         yield 'non-ascii' => ['ORDERé1'];
         yield 'control' => ["ORDER\x011"];
+        yield 'trailing NUL' => ["ORDER-1\0"];
     }
 
     #[DataProvider('badReferences')]
@@ -182,45 +223,34 @@ final class AmountAndMessageTest extends TestCase
         MerchantReference::resolve($reference);
     }
 
-    public function testReceiptNumbersArePaddedToSixDigits(): void
+    /** @return iterable<string, array{string, string}> */
+    public static function receiptNumbers(): iterable
     {
-        self::assertSame('000024', Validate::receiptNumber('24', 'Void'));
-        self::assertSame('000024', Validate::receiptNumber(' 000024 ', 'Void'));
-        self::assertSame('123456', Validate::receiptNumber('123456', 'Void'));
+        yield 'short' => ['24', '000024'];
+        yield 'padded' => [' 000024 ', '000024'];
+        yield 'six digits' => ['123456', '123456'];
+        yield 'stray characters are dropped' => ['A-24', '000024'];
+        yield 'longer than six' => ['1234567', '1234567'];
+        yield 'no digits' => ['abc', ''];
+        yield 'only zeros' => ['0000', ''];
+        yield 'arabic-indic digits' => ['٢٤', '0000٢٤'];
     }
 
-    /** @return iterable<string, array{string}> */
-    public static function badReceiptNumbers(): iterable
+    #[DataProvider('receiptNumbers')]
+    public function testReceiptNumbersArePaddedLikeTheWindowsSdk(string $stan, string $padded): void
     {
-        yield 'blank' => ['  '];
-        yield 'letters' => ['abc'];
-        yield 'mixed' => ['A24'];
-        yield 'zero' => ['0000'];
-        yield 'too long' => ['1234567'];
-        yield 'negative' => ['-24'];
+        self::assertSame($padded, Validate::paddedStan($stan));
     }
 
-    #[DataProvider('badReceiptNumbers')]
-    public function testAReceiptNumberThatIsNotOneToSixDigitsIsRefused(string $stan): void
+    public function testOptionalFieldsAreSentAsGivenWhenNotBlank(): void
     {
-        $this->expectException(InvalidRequestException::class);
-        Validate::receiptNumber($stan, 'Void');
-    }
+        $json = self::build(EcrTransactionType::Refund, amount: '1', stan: 'abc', originalTerminalId: ' T1 ', originalDate: '2026-08-06')->json;
 
-    public function testDatesAreRealDaysWrittenYyyyMmDd(): void
-    {
-        self::assertSame('20260806', Validate::transactionDate('20260806', true, 'A refund'));
-        self::assertSame('', Validate::transactionDate('', false, 'An inquiry'));
-        foreach (['2026-08-06', '20261306', '20260230', '0806', 'today'] as $bad) {
-            try {
-                Validate::transactionDate($bad, false, 'An inquiry');
-                self::fail('accepted ' . $bad);
-            } catch (InvalidRequestException) {
-                self::assertTrue(true);
-            }
-        }
-        $this->expectException(InvalidRequestException::class);
-        Validate::transactionDate('', true, 'A refund');
+        // A receipt number with no digits still goes, empty, as in the Windows SDK.
+        self::assertSame('', $json->str('stan'));
+        self::assertSame(' T1 ', $json->str('originalTerminalId'));
+        self::assertSame('2026-08-06', $json->str('originalTransactionDate'));
+        self::assertFalse(self::build(EcrTransactionType::Refund, amount: '1', stan: '24', originalDate: " \u{A0}")->json->has('originalTransactionDate'));
     }
 
     public function testTransactionTypeFlagsMatchTheWindowsSdk(): void

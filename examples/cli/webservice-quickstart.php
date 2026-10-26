@@ -39,7 +39,6 @@ $plan = EcrSessions::plan(
     new EcrConfig(
         environment: $environment,
         ecrId: 'TILL-01',
-        timezone: 'Asia/Muscat',
         stateDirectory: __DIR__ . '/../var/state',
         // caBundlePath: 'C:\php\extras\ssl\cacert.pem',   // if PHP has no CA bundle configured
     ),

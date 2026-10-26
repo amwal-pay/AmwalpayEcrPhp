@@ -224,8 +224,8 @@ final class Api
             return self::fields($errors);
         }
         $ecr = $config->ecrConfig();
-        // The countdown covers the whole wait: 120 s Wi-Fi, 160 s (connect + answer) Web Service.
-        $timeout = (int) round($config->usesWebService() ? $ecr->connectTimeout + $ecr->responseTimeout : $ecr->responseTimeout);
+        // The configured response budget, as the Windows sample: 120 s Wi-Fi, 130 s Web Service.
+        $timeout = (int) $ecr->responseTimeout;
         $started = $this->app->registry->start($request, $config->usesWebService(), max(1, $timeout));
         return $started[0] === 'busy'
             ? self::error(409, 'A transaction is already running on this terminal', $started[1])

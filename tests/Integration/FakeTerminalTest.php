@@ -52,7 +52,7 @@ final class FakeTerminalTest extends TestCase
         $this->terminal = new BackgroundProcess(array_merge([__DIR__ . '/../../tools/fake-pos-server.php', '--key', self::KEY, '--port', '0'], $flags));
         $plan = EcrSessions::plan(
             new LanLink('127.0.0.1', $this->terminal->port),
-            new EcrConfig(...array_merge(['secureHashKey' => self::KEY, 'stateDirectory' => $this->stateDir(), 'responseTimeout' => 5.0], $config)),
+            new EcrConfig(...array_merge(['secureHashKey' => self::KEY, 'stateDirectory' => $this->stateDir(), 'responseTimeout' => 5.0, 'guardFinancialOperations' => true], $config)),
         );
         self::assertTrue($plan->isReady(), implode("\n", $plan->issues()));
         return EcrSessions::open('SN-WIFI-0001', $plan);
@@ -206,13 +206,11 @@ final class FakeTerminalTest extends TestCase
         self::assertInstanceOf(Unauthenticated::class, $result->failure);
     }
 
-    public function testAnAnswerInANewerFormatIsRefusedExplicitly(): void
+    public function testAnAnswerInANewerFormatIsReadAsTheWindowsSdkReadsIt(): void
     {
-        $failed = $this->session(['--answer-version', '2'], autoInquireOnFailure: false)->sale('1.234', 'ORD-V1');
+        $result = $this->session(['--answer-version', '2'], autoInquireOnFailure: false)->sale('1.234', 'ORD-V1');
 
-        self::assertInstanceOf(Failed::class, $failed);
-        self::assertInstanceOf(Malformed::class, $failed->failure);
-        self::assertStringContainsString('version 2', $failed->failure->message);
+        self::assertNotInstanceOf(Failed::class, $result);
     }
 
     public function testOldFirmwareRefusesCloseReceiptAndNotFoundIsNotFound(): void

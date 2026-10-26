@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace AmwalPay\Ecr;
 
-use AmwalPay\Ecr\Failure\Invalid;
+use AmwalPay\Ecr\Failure\Malformed;
+use AmwalPay\Ecr\Internal\Validate;
 use AmwalPay\Ecr\Result\CloseReceiptFailed;
 use AmwalPay\Ecr\Result\EcrInquiry;
 use AmwalPay\Ecr\Result\EcrReceipt;
@@ -72,10 +73,10 @@ final class EcrOpenedSession
     }
 
     /**
-     * @param string|int|Amount $amount Major units as a string, e.g. "1.234". Never a float.
+     * @param string|int|float|Amount $amount Major units, e.g. "1.234".
      * @param string $merchantReference This attempt's own reference. Save it before calling.
      */
-    public function sale(string|int|Amount $amount, string $merchantReference = ''): EcrResult
+    public function sale(string|int|float|Amount $amount, string $merchantReference = ''): EcrResult
     {
         return $this->local !== null
             ? $this->local->sale($amount, $merchantReference)
@@ -92,7 +93,7 @@ final class EcrOpenedSession
 
     /** @param string $transactionDate The original's day as `yyyyMMdd`. */
     public function refund(
-        string|int|Amount $amount,
+        string|int|float|Amount $amount,
         string $receiptNumber,
         string $transactionDate,
         string $originalTerminalId = '',
@@ -129,7 +130,7 @@ final class EcrOpenedSession
     public function receipt(string $receiptNumber, string $transactionDate, string $originalTerminalId = ''): EcrReceipt
     {
         if ($this->local === null) {
-            return new ReceiptUnavailable('', 'Receipt fetch is only supported over Wi-Fi ECR', '');
+            return new ReceiptUnavailable('', 'Receipt fetch is only supported over Wi‑Fi and USB cable ECR', '');
         }
         return $this->local->receipt($receiptNumber, $transactionDate, $originalTerminalId);
     }
@@ -151,12 +152,12 @@ final class EcrOpenedSession
         if ($this->local !== null) {
             return $this->local->closeReceipt($merchantReference);
         }
-        $original = trim($originalMerchantReference) === '' ? $merchantReference : $originalMerchantReference;
-        if (trim($original) === '') {
-            return new CloseReceiptFailed($merchantReference, new Invalid('Web Service close receipt needs the original merchant reference'));
+        $original = Validate::isBlank($originalMerchantReference) ? $merchantReference : $originalMerchantReference;
+        if (Validate::isBlank($original)) {
+            return new CloseReceiptFailed($merchantReference, new Malformed('Web Service close receipt needs the original merchant reference'));
         }
         // Only one reference passed: it is the original; the SDK mints this request's id.
-        $closeReference = trim($originalMerchantReference) === '' ? '' : $merchantReference;
+        $closeReference = Validate::isBlank($originalMerchantReference) ? '' : $merchantReference;
         return $this->webTerminal()->closeReceipt($original, $closeReference);
     }
 

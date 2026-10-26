@@ -41,8 +41,8 @@ final class EcrMessage
     }
 
     /**
-     * Builds and, when the config has a key, signs one request. Arguments are
-     * already validated; `$stan` is padded, `$amount` is a valid amount.
+     * Builds and, when the config has a key, signs one request. Optional fields
+     * are sent as given when not blank; `$stan` is padded here.
      */
     public static function build(
         EcrTransactionType $type,
@@ -71,19 +71,19 @@ final class EcrMessage
             }
             $body->set('amount', $amount->toWire($config->minorUnitDigits));
         }
-        if ($type->requiresOriginalStan() && $stan !== '') {
-            $body->set('stan', $stan);
+        if ($type->requiresOriginalStan() && !Validate::isBlank($stan)) {
+            $body->set('stan', Validate::paddedStan($stan));
         }
-        if ($type->allowsOtherTerminal() && $originalTerminalId !== '') {
+        if ($type->allowsOtherTerminal() && !Validate::isBlank($originalTerminalId)) {
             $body->set('originalTerminalId', $originalTerminalId);
         }
-        if ($type->requiresOriginalDate() && $originalDate !== '') {
+        if ($type->requiresOriginalDate() && !Validate::isBlank($originalDate)) {
             $body->set('originalTransactionDate', $originalDate);
         }
         // Names the transaction being looked up in place of its receipt number.
         // Only a read-only type may: acting on a transaction still goes by the
         // number on the printed receipt.
-        if (!$type->movesMoney() && trim($originalReference) !== '') {
+        if (!$type->movesMoney() && !Validate::isBlank($originalReference)) {
             $body->set('originalMerchantReference', MerchantReference::resolve($originalReference));
         }
 
@@ -98,10 +98,9 @@ final class EcrMessage
         return new self($reference, $body);
     }
 
-    /** `yyyyMMddHHmmss` in the till's time zone. */
+    /** `yyyyMMddHHmmss` in the machine's local time (`DateTime.Now`), or in `timezone` when set. */
     public static function timestamp(EcrConfig $config): string
     {
-        $zone = new \DateTimeZone($config->timezone ?? date_default_timezone_get());
-        return (new \DateTimeImmutable('now', $zone))->format('YmdHis');
+        return LocalTime::stamp($config->timezone);
     }
 }
