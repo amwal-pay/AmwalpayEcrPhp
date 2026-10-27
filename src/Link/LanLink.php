@@ -7,7 +7,7 @@ namespace AmwalPay\Ecr\Link;
 use AmwalPay\Ecr\EcrConfig;
 
 /**
- * Wi-Fi/LAN: TCP to the IP address and port the terminal shows on its idle
+ * Wi-Fi: TCP to the IP address and port the terminal shows on its idle
  * screen. The till and the terminal must be on the same network.
  */
 final class LanLink extends EcrLink

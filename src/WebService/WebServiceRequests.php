@@ -155,4 +155,53 @@ final class WebServiceRequests
             $transactionDateTime,
         )[1];
     }
+
+    /**
+     * `/Ecr/settle`. The path selects the operation; the body is the shared
+     * identity payload (no `messageType`, no amount).
+     */
+    public static function settle(
+        int $merchantId,
+        int $terminalId,
+        string $terminalSerial,
+        string $merchantReference = '',
+        string $currencyCode = '512',
+        string $ecrId = 'ECR01',
+        string $transactionDateTime = '',
+        #[\SensitiveParameter] string $secureHashKey = '',
+    ): JsonObject {
+        return WebServiceMessage::buildPlain(
+            $merchantId,
+            $terminalId,
+            $terminalSerial,
+            $secureHashKey,
+            $currencyCode,
+            $ecrId,
+            $merchantReference,
+            $transactionDateTime,
+        )[1];
+    }
+
+    /** `/Ecr/CheckReachability`. Same body as {@see self::settle()}. */
+    public static function checkReachability(
+        int $merchantId,
+        int $terminalId,
+        string $terminalSerial,
+        string $merchantReference = '',
+        string $currencyCode = '512',
+        string $ecrId = 'ECR01',
+        string $transactionDateTime = '',
+        #[\SensitiveParameter] string $secureHashKey = '',
+    ): JsonObject {
+        return WebServiceMessage::buildPlain(
+            $merchantId,
+            $terminalId,
+            $terminalSerial,
+            $secureHashKey,
+            $currencyCode,
+            $ecrId,
+            $merchantReference,
+            $transactionDateTime,
+        )[1];
+    }
 }

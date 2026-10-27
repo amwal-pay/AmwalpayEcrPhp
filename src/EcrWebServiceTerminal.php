@@ -18,8 +18,10 @@ use AmwalPay\Ecr\Result\CloseReceiptFailed;
 use AmwalPay\Ecr\Result\EcrInquiry;
 use AmwalPay\Ecr\Result\EcrReceiptClosed;
 use AmwalPay\Ecr\Result\EcrResult;
+use AmwalPay\Ecr\Result\EcrSettlement;
 use AmwalPay\Ecr\Result\Failed;
 use AmwalPay\Ecr\Result\InquiryFailed;
+use AmwalPay\Ecr\Result\SettlementFailed;
 use AmwalPay\Ecr\Safety\FinancialGuard;
 use AmwalPay\Ecr\WebService\Http\HttpTransport;
 use AmwalPay\Ecr\WebService\WebServiceApi;
@@ -187,6 +189,91 @@ final class EcrWebServiceTerminal
         return WireReaders::toReceiptClosed($response, $reference);
     }
 
+    /**
+     * Posts `/Ecr/settle`. Confirm with the cashier before calling: the Hub
+     * starts the close as soon as the request arrives. The answer is read the
+     * same way as a Wi-Fi `SETTLEMENT`.
+     *
+     * @param string $merchantReference This request's own id. Blank: generated.
+     */
+    public function settlement(string $merchantReference = ''): EcrSettlement
+    {
+        $ids = $this->backendIds();
+        if ($ids === null) {
+            return new SettlementFailed($merchantReference, new Malformed('merchantId and terminalId are required for Web Service ECR'));
+        }
+        [$reference, $body] = $this->plain($ids, $merchantReference, WebServiceOperation::Settle);
+        $response = $this->guard->protected(
+            $this->config->connectTimeout + $this->config->responseTimeout,
+            fn (): JsonObject => $this->api->postJson(WebServiceOperation::Settle, $body),
+        );
+        if (self::lost($response)) {
+            $reason = $response->str('message');
+            return new SettlementFailed($reference, new ConnectionLost($reason !== '' ? $reason : 'The Web Service did not answer'));
+        }
+        return WireReaders::toSettlement($response, $reference, $this->config->minorUnitDigits);
+    }
+
+    /**
+     * Posts `/Ecr/CheckReachability` with the probe budget, so a Hub that does
+     * not answer does not consume the sale's response timeout. A sale does not
+     * call this.
+     */
+    public function probeReachability(): EcrReachability
+    {
+        $origin = $this->api->routes()->hub();
+        $parts = parse_url($origin);
+        if (!\is_array($parts) || !isset($parts['scheme'], $parts['host'])) {
+            return new EcrReachability(false, $origin, 0, 'The Web Service address is not a URL', $origin);
+        }
+        $host = $parts['host'];
+        $port = $parts['port'] ?? (strtolower($parts['scheme']) === 'https' ? 443 : 80);
+
+        $ids = $this->backendIds();
+        if ($ids === null) {
+            return new EcrReachability(false, $host, $port, 'merchantId and terminalId are required for Web Service ECR', $origin);
+        }
+
+        [, $body] = $this->plain($ids, '', WebServiceOperation::CheckReachability);
+        $response = $this->api->postJson(WebServiceOperation::CheckReachability, $body, $this->config->probeTimeout);
+        $envelope = EcrWireResponse::parse($response);
+        if (self::lost($response) || !$envelope->success) {
+            $reason = $response->str('message');
+            if ($reason === '') {
+                $reason = $envelope->displayMessage();
+            }
+            return new EcrReachability(false, $host, $port, $reason !== '' ? $reason : 'The terminal is not reachable', $origin);
+        }
+        return new EcrReachability(true, $host, $port, null, $origin);
+    }
+
+    /**
+     * @param array{0: int, 1: int} $ids
+     * @return array{0: string, 1: JsonObject}
+     */
+    private function plain(array $ids, string $merchantReference, WebServiceOperation $operation): array
+    {
+        [$reference, $body] = WebServiceMessage::buildPlain(
+            $ids[0],
+            $ids[1],
+            $this->terminalSerial,
+            $this->config->secureHashKey,
+            $this->config->currencyCode,
+            $this->config->ecrId,
+            $merchantReference,
+            EcrMessage::timestamp($this->config),
+        );
+        Json::write($body); // refuses text that is not UTF-8, before anything is sent
+        WebServiceHttpLog::operation($this->logger, $operation->label(), $reference, $this->terminalSerial, $ids[0], $ids[1]);
+        return [$reference, $body];
+    }
+
+    /** A transport failure synthesised as an answer: no data, and a request to inquire. */
+    private static function lost(JsonObject $response): bool
+    {
+        return $response->str('nextStep') === WebServiceApi::UNKNOWN_OUTCOME_STEP && $response->get('data') === null;
+    }
+
     /** @param array{0: int, 1: int} $ids */
     private function money(
         EcrTransactionType $type,
@@ -221,7 +308,7 @@ final class EcrWebServiceTerminal
         // A transport failure is synthesised as an answer with no data, which
         // would read as "not found", and a till told nothing was taken may
         // charge again. It is a failed lookup, not a finding.
-        if ($response->str('nextStep') === WebServiceApi::UNKNOWN_OUTCOME_STEP && $response->get('data') === null) {
+        if (self::lost($response)) {
             $reason = $response->str('message');
             return new InquiryFailed($reference, new ConnectionLost($reason !== '' ? $reason : 'The Web Service did not answer'));
         }

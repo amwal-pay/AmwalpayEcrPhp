@@ -7,6 +7,7 @@ namespace AmwalPay\Ecr;
 use AmwalPay\Ecr\Internal\SecureHash;
 use AmwalPay\Ecr\Link\EcrLink;
 use AmwalPay\Ecr\Link\LanLink;
+use AmwalPay\Ecr\Link\UsbCableLink;
 use AmwalPay\Ecr\Link\WebServiceLink;
 use AmwalPay\Ecr\WebService\WebServiceSecureHash;
 
@@ -46,7 +47,12 @@ final class EcrSessionPlan
         return $this->link instanceof WebServiceLink;
     }
 
-    /** Which of the two secrets this plan expects: Wi-Fi and Web Service keys are issued separately. */
+    public function usesUsbCable(): bool
+    {
+        return $this->link instanceof UsbCableLink;
+    }
+
+    /** Which of the two secrets this plan expects: Wi-Fi (and USB cable) and Web Service keys are issued separately. */
     public function signingKeyLabel(): string
     {
         return self::keyLabelFor($this->link);
@@ -57,11 +63,14 @@ final class EcrSessionPlan
         return $this->config->secureHashKey !== '';
     }
 
-    /** Operator-facing summary, never a secret: `192.168.1.50:9100` or `UAT · merchant 10001 · terminal 20002`. */
+    /** Operator-facing summary, never a secret: `192.168.1.50:9100`, `COM8` or `UAT · merchant 10001 · terminal 20002`. */
     public function connectionSummary(): string
     {
         if ($this->link instanceof LanLink) {
             return $this->link->host . ':' . $this->config->port;
+        }
+        if ($this->link instanceof UsbCableLink) {
+            return $this->link->comPort !== '' ? $this->link->comPort : 'USB cable';
         }
         if ($this->link instanceof WebServiceLink) {
             $summary = $this->config->environment->value;
@@ -80,7 +89,7 @@ final class EcrSessionPlan
     public static function keyLabelFor(EcrLink $link): string
     {
         return match (true) {
-            $link instanceof LanLink => SecureHash::KEY_LABEL,
+            $link instanceof LanLink, $link instanceof UsbCableLink => SecureHash::KEY_LABEL,
             $link instanceof WebServiceLink => WebServiceSecureHash::KEY_LABEL,
             default => throw new \LogicException('Unsupported ECR link: ' . $link::class),
         };

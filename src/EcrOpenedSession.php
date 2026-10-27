@@ -11,14 +11,15 @@ use AmwalPay\Ecr\Result\EcrInquiry;
 use AmwalPay\Ecr\Result\EcrReceipt;
 use AmwalPay\Ecr\Result\EcrReceiptClosed;
 use AmwalPay\Ecr\Result\EcrResult;
+use AmwalPay\Ecr\Result\EcrSettlement;
 use AmwalPay\Ecr\Result\ReceiptUnavailable;
 use AmwalPay\Ecr\Safety\FinancialGuard;
 use AmwalPay\Ecr\Safety\JournalEntry;
 
 /**
  * One opened transport for a validated plan: every sale, void, refund,
- * inquiry, e-receipt and close receipt for that terminal goes through it, the
- * same way over Wi-Fi and Web Service.
+ * inquiry, e-receipt, close receipt and settlement for that terminal goes
+ * through it, the same way over Wi-Fi, USB cable and Web Service.
  *
  * Open it with {@see EcrSessions::open()}.
  */
@@ -45,31 +46,47 @@ final class EcrOpenedSession
         return $this->local !== null;
     }
 
-    /** Receipt URLs exist only on Wi-Fi. */
+    /** Receipt URLs exist only on the local protocol (Wi-Fi and USB cable). */
     public function supportsReceipt(): bool
     {
         return $this->local !== null;
     }
 
-    /** The Wi-Fi terminal behind this session, or null on Web Service. */
+    /** Wi-Fi and USB cable send `SETTLEMENT`. Web Service posts `/Ecr/settle`. */
+    public function supportsSettlement(): bool
+    {
+        return $this->local !== null || $this->web !== null;
+    }
+
+    /** The Wi-Fi or USB cable terminal behind this session, or null on Web Service. */
     public function lanTerminal(): ?EcrTerminal
     {
         return $this->local;
     }
 
-    /** The Web Service terminal behind this session, or null on Wi-Fi. */
+    /** The Web Service terminal behind this session, or null on Wi-Fi and USB cable. */
     public function webServiceTerminal(): ?EcrWebServiceTerminal
     {
         return $this->web;
     }
 
     /**
-     * Whether the Wi-Fi port answers, before a sale. Null on Web Service: the
-     * Hub has no probe.
+     * Wi-Fi and USB cable probe the link before a sale. Web Service returns
+     * null, so a sale is not held for a Hub probe: `/Ecr/CheckReachability` is
+     * {@see self::checkReachability()}, called on its own.
      */
     public function probeReachability(): ?EcrReachability
     {
         return $this->local?->probeReachability();
+    }
+
+    /**
+     * Posts `/Ecr/CheckReachability` with the probe timeout. Null when this
+     * session is not Web Service. A sale does not call this.
+     */
+    public function checkReachability(): ?EcrReachability
+    {
+        return $this->web?->probeReachability();
     }
 
     /**
@@ -126,7 +143,7 @@ final class EcrOpenedSession
             : $this->webTerminal()->inquireByReference($originalReference, $transactionDate, $merchantReference);
     }
 
-    /** Wi-Fi only. On Web Service it answers {@see ReceiptUnavailable}. */
+    /** Wi-Fi and USB cable only. On Web Service it answers {@see ReceiptUnavailable}. */
     public function receipt(string $receiptNumber, string $transactionDate, string $originalTerminalId = ''): EcrReceipt
     {
         if ($this->local === null) {
@@ -159,6 +176,20 @@ final class EcrOpenedSession
         // Only one reference passed: it is the original; the SDK mints this request's id.
         $closeReference = Validate::isBlank($originalMerchantReference) ? '' : $merchantReference;
         return $this->webTerminal()->closeReceipt($original, $closeReference);
+    }
+
+    /**
+     * Closes the current batch. Wi-Fi and USB cable send `SETTLEMENT`. Web
+     * Service posts `/Ecr/settle`. Confirm with the cashier before calling: the
+     * close starts as soon as the request arrives.
+     *
+     * @param string $merchantReference This request's own id. Blank: generated.
+     */
+    public function settlement(string $merchantReference = ''): EcrSettlement
+    {
+        return $this->local !== null
+            ? $this->local->settlement($merchantReference)
+            : $this->webTerminal()->settlement($merchantReference);
     }
 
     /** Identifies this terminal to the guard's lock and journal. */

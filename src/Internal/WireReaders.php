@@ -16,23 +16,31 @@ use AmwalPay\Ecr\Result\EcrInquiry;
 use AmwalPay\Ecr\Result\EcrReceipt;
 use AmwalPay\Ecr\Result\EcrReceiptClosed;
 use AmwalPay\Ecr\Result\EcrResult;
+use AmwalPay\Ecr\Result\EcrSettlement;
+use AmwalPay\Ecr\Result\EcrSettlementTotal;
 use AmwalPay\Ecr\Result\EcrTransaction;
 use AmwalPay\Ecr\Result\Failed;
 use AmwalPay\Ecr\Result\Found;
 use AmwalPay\Ecr\Result\NextStep;
 use AmwalPay\Ecr\Result\NotFound;
+use AmwalPay\Ecr\Result\NothingToSettle;
+use AmwalPay\Ecr\Result\NotSettled;
 use AmwalPay\Ecr\Result\ReceiptClosed;
 use AmwalPay\Ecr\Result\ReceiptReady;
 use AmwalPay\Ecr\Result\ReceiptUnavailable;
+use AmwalPay\Ecr\Result\Settled;
 
 /**
  * Reads an answer, from the terminal or the Hub, into the SDK's result types.
- * The same rules for Wi-Fi and Web Service.
+ * The same rules for Wi-Fi, USB cable and Web Service.
  *
  * @internal
  */
 final class WireReaders
 {
+    /** The types a settlement reports totals for, in receipt order. */
+    public const SETTLEMENT_TOTAL_TYPES = ['SALE', 'REFUND', 'VOID', 'PRE_AUTH', 'CAPTURE'];
+
     /** Reads an answer to a sale, void or refund into one of the three outcomes. */
     public static function toResult(JsonObject $json, string $merchantReference, int $minorUnitDigits): EcrResult
     {
@@ -157,6 +165,81 @@ final class WireReaders
             );
         }
         return new ReceiptClosed($reference, $json->toJson());
+    }
+
+    /**
+     * Reads the answer to a settlement.
+     *
+     * `settlementStatus` decides the branch, not the envelope alone: an empty
+     * batch is a success with nothing in it, and a refusal before the
+     * settlement started (busy, not idle, a terminal too old to know it)
+     * carries no status at all.
+     */
+    public static function toSettlement(JsonObject $json, string $merchantReference, int $minorUnitDigits): EcrSettlement
+    {
+        $envelope = EcrWireResponse::parse($json);
+        $data = $envelope->data;
+        $reference = self::orElse($envelope->merchantReference(), $merchantReference);
+        $status = $data?->str('settlementStatus') ?? '';
+        $raw = $json->toJson();
+
+        if ($envelope->success && $status === 'NO_TRANSACTIONS') {
+            $message = $envelope->displayMessage();
+            return new NothingToSettle($reference, $message !== '' ? $message : 'There are no transactions to settle', $raw);
+        }
+
+        if (!$envelope->success || $data === null || $status !== 'SETTLED') {
+            $reason = $envelope->displayMessage();
+            return new NotSettled(
+                $reference,
+                $envelope->responseCode,
+                $status,
+                $reason !== '' ? $reason : 'The batch was not settled',
+                self::wholeNumber($data, 'uploadedTransactions'),
+                $raw,
+            );
+        }
+
+        $totalsNode = $data->obj('totals');
+        $totals = [];
+        foreach (self::SETTLEMENT_TOTAL_TYPES as $type) {
+            $row = $totalsNode?->obj($type);
+            $totals[$type] = $row === null
+                ? new EcrSettlementTotal(0, Amount::majorUnits('0', $minorUnitDigits))
+                : new EcrSettlementTotal(self::wholeNumber($row, 'count') ?? 0, Amount::majorUnits($row->str('amount'), $minorUnitDigits));
+        }
+
+        return new Settled(
+            $reference,
+            $data->str('batchId'),
+            $data->str('currency'),
+            $data->str('startTime'),
+            $data->str('endTime'),
+            self::wholeNumber($data, 'totalTransactions') ?? 0,
+            Amount::majorUnits($data->str('netAmount'), $minorUnitDigits),
+            $totals,
+            $raw,
+        );
+    }
+
+    /**
+     * The field as a 32-bit whole number, or null: `int.TryParse` with
+     * `NumberStyles.Integer`, so surrounding white space and a sign are accepted.
+     */
+    private static function wholeNumber(?JsonObject $json, string $key): ?int
+    {
+        if ($json === null) {
+            return null;
+        }
+        if (preg_match('/^[\t\n\v\f\r ]*([+-]?)([0-9]+)[\t\n\v\f\r ]*$/', $json->str($key), $m) !== 1) {
+            return null;
+        }
+        $digits = ltrim($m[2], '0');
+        if (\strlen($digits) > 10) {
+            return null;
+        }
+        $value = (int) ($m[1] === '-' ? '-' . $digits : $digits);
+        return $value < -2147483648 || $value > 2147483647 ? null : $value;
     }
 
     /**

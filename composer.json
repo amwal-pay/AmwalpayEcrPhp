@@ -1,6 +1,6 @@
 {
     "name": "amwalpay/ecr-php",
-    "description": "Amwal Pay ECR SDK for PHP: drive an Amwal POS terminal over Wi-Fi/LAN or the Amwal ECR Web Service (sale, void, refund, inquiry, close receipt) with the same safety rules as the Windows/.NET SDK.",
+    "description": "Amwal Pay ECR SDK for PHP: drive an Amwal POS terminal over Wi-Fi, USB cable or the Amwal ECR Web Service (sale, void, refund, inquiry, e-receipt, close receipt, settlement) with the same safety rules as the Windows/.NET SDK.",
     "type": "library",
     "license": "proprietary",
     "keywords": [
@@ -10,6 +10,8 @@
         "pos",
         "payments",
         "terminal",
+        "settlement",
+        "usb",
         "oman"
     ],
     "homepage": "https://github.com/amwal-pay/AmwalpayEcrPhp",
@@ -30,6 +32,7 @@
         "phpunit/phpunit": "^10.5 || ^11.0"
     },
     "suggest": {
+        "ext-ffi": "USB cable on Windows: drives the COM port through kernel32 (extension=ffi, ffi.enable=true under a web server)",
         "ext-sockets": "Lets the integration tests simulate a TCP reset; not needed at runtime",
         "psr/log": "Route SDK diagnostics to any PSR-3 logger through AmwalPay\\Ecr\\Log\\PsrLoggerAdapter"
     },

@@ -30,13 +30,17 @@ use AmwalPay\Ecr\Result\EcrInquiry;
 use AmwalPay\Ecr\Result\EcrReceipt;
 use AmwalPay\Ecr\Result\EcrReceiptClosed;
 use AmwalPay\Ecr\Result\EcrResult;
+use AmwalPay\Ecr\Result\EcrSettlement;
 use AmwalPay\Ecr\Result\Failed;
 use AmwalPay\Ecr\Result\InquiryFailed;
 use AmwalPay\Ecr\Result\ReceiptFailed;
+use AmwalPay\Ecr\Result\SettlementFailed;
 use AmwalPay\Ecr\Safety\FinancialGuard;
 
 /**
- * A POS terminal reachable over Wi-Fi/LAN.
+ * A POS terminal reachable over Wi-Fi, or down a USB cable through a
+ * {@see \AmwalPay\Ecr\Channel\SerialEcrChannel}: the same signing, messages and
+ * answers either way.
  *
  * One instance addresses one terminal and holds no connection between calls,
  * so it is cheap to keep and safe to reuse.
@@ -79,7 +83,9 @@ final class EcrTerminal
     /** Identifies this physical terminal to the guard's lock and journal. */
     public function terminalKey(): string
     {
-        return 'wifi|' . strtolower($this->channel->host()) . '|' . $this->channel->port();
+        // A cable has no socket: its channel reports the COM port and port 0.
+        $kind = $this->channel->port() === 0 ? 'cable|' : 'wifi|';
+        return $kind . strtolower($this->channel->host()) . '|' . $this->channel->port();
     }
 
     public function guard(): FinancialGuard
@@ -261,6 +267,30 @@ final class EcrTerminal
         return $answer instanceof Failure
             ? new CloseReceiptFailed($message->merchantReference, $answer)
             : WireReaders::toReceiptClosed($answer, $message->merchantReference);
+    }
+
+    /**
+     * Closes the current batch. The terminal starts as soon as this arrives:
+     * the till confirms with the cashier before calling. Uses the full response
+     * timeout, because a close can wait on pending reversals. Safe to repeat
+     * when the answer is lost: a batch that closed answers
+     * {@see \AmwalPay\Ecr\Result\NothingToSettle} the next time, and one that
+     * did not settles on the retry.
+     *
+     * @param string $merchantReference The till's own reference for the request. Blank: generated.
+     */
+    public function settlement(string $merchantReference = ''): EcrSettlement
+    {
+        $message = $this->build(EcrTransactionType::Settlement, merchantReference: $merchantReference);
+        return $this->guard->protected(
+            $this->config->connectTimeout + $this->config->responseTimeout,
+            function () use ($message): EcrSettlement {
+                $answer = $this->exchange($message);
+                return $answer instanceof Failure
+                    ? new SettlementFailed($message->merchantReference, $answer)
+                    : WireReaders::toSettlement($answer, $message->merchantReference, $this->config->minorUnitDigits);
+            },
+        );
     }
 
     /**

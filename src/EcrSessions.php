@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace AmwalPay\Ecr;
 
+use AmwalPay\Ecr\Channel\EcrChannel;
 use AmwalPay\Ecr\Internal\MerchantReference;
 use AmwalPay\Ecr\Internal\Validate;
 use AmwalPay\Ecr\Link\EcrLink;
 use AmwalPay\Ecr\Link\LanLink;
+use AmwalPay\Ecr\Link\UsbCableLink;
 use AmwalPay\Ecr\Link\WebServiceLink;
 use AmwalPay\Ecr\Log\EcrLogger;
 use AmwalPay\Ecr\Safety\FinancialGuard;
@@ -77,6 +79,9 @@ final class EcrSessions
                 ? EcrConfig::WEB_SERVICE_RESPONSE_TIMEOUT
                 : $resolved->responseTimeout;
             $resolved = $resolved->with(merchantId: $merchantId, terminalId: $terminalId, responseTimeout: $responseTimeout);
+        } elseif ($link instanceof UsbCableLink) {
+            // Nothing to validate: a cable has no address to get wrong. Whether
+            // one is plugged in is answered by the probe, not by configuration.
         } else {
             throw new \InvalidArgumentException('Unsupported ECR link: ' . $link::class);
         }
@@ -89,15 +94,18 @@ final class EcrSessions
     }
 
     /**
-     * Opens the transport `$plan` describes. One dispatch for Wi-Fi and Web
-     * Service, so sale, inquiry and recovery cannot diverge on which client
-     * they build.
+     * Opens the transport `$plan` describes. One dispatch for Wi-Fi, USB cable
+     * and Web Service, so sale, inquiry and recovery cannot diverge on which
+     * client they build.
      *
      * @param string $terminalSerial The terminal's serial number, as registered.
      * @param HttpTransport|null $httpTransport Web Service only: how the HTTPS post is made. Null: cURL.
      * @param FinancialGuard|null $guard The payment-safety guard. Null: file-based, from the config. Pass one
      *        built on a shared journal and lock when several servers drive the same terminal.
+     * @param (\Closure(): EcrChannel)|null $usbChannel Required for a USB cable plan, ignored otherwise:
+     *        builds the channel, e.g. `fn () => new SerialEcrChannel('COM8')`.
      * @throws \InvalidArgumentException the plan has issues
+     * @throws \LogicException a USB cable plan without `$usbChannel`
      */
     public static function open(
         string $terminalSerial,
@@ -105,11 +113,19 @@ final class EcrSessions
         ?EcrLogger $logger = null,
         ?HttpTransport $httpTransport = null,
         ?FinancialGuard $guard = null,
+        ?\Closure $usbChannel = null,
     ): EcrOpenedSession {
         if (!$plan->isReady()) {
             throw new \InvalidArgumentException('Cannot open a session with unresolved issues: ' . implode(', ', $plan->issues()));
         }
         $logger ??= EcrLogger::none();
+        if ($plan->usesUsbCable()) {
+            $channel = $usbChannel !== null ? $usbChannel() : null;
+            if (!$channel instanceof EcrChannel) {
+                throw new \LogicException('USB cable sessions require a channel factory');
+            }
+            return new EcrOpenedSession($plan, self::usbCableTerminal($terminalSerial, $plan, $channel, $logger, $guard), null);
+        }
         if ($plan->usesLan()) {
             return new EcrOpenedSession($plan, self::lanTerminal($terminalSerial, $plan, $logger, $guard), null);
         }
@@ -125,6 +141,26 @@ final class EcrSessions
             throw new \InvalidArgumentException('The plan is not for Wi-Fi ECR');
         }
         return new EcrTerminal($plan->link->host, $terminalSerial, $plan->config, $logger, $guard);
+    }
+
+    /**
+     * A terminal reached down a USB cable.
+     *
+     * The channel comes from the caller because finding a cable is a platform
+     * job. Everything above the channel is identical to {@see self::lanTerminal()}:
+     * the same signing, the same messages, the same answers.
+     */
+    public static function usbCableTerminal(
+        string $terminalSerial,
+        EcrSessionPlan $plan,
+        EcrChannel $channel,
+        ?EcrLogger $logger = null,
+        ?FinancialGuard $guard = null,
+    ): EcrTerminal {
+        if (!$plan->usesUsbCable()) {
+            throw new \InvalidArgumentException('The plan is not for USB cable ECR');
+        }
+        return new EcrTerminal($channel, $terminalSerial, $plan->config, $logger, $guard);
     }
 
     public static function webServiceTerminal(

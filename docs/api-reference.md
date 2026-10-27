@@ -1,21 +1,22 @@
 # amwalpay/ecr-php API reference
 
-This page lists the public API of the Composer package `amwalpay/ecr-php` (namespace `AmwalPay\Ecr`, PHP >= 8.1). The package connects a merchant's till to an Amwal POS terminal, either over Wi-Fi/LAN or through the Amwal Hub (ECR Web Service). For every public class, enum, interface, constant, constructor and method it gives the signature, what it returns and what it throws. Everything under `AmwalPay\Ecr\Internal\`, and anything marked `@internal`, is not API and can change without notice.
+This page lists the public API of the Composer package `amwalpay/ecr-php` (namespace `AmwalPay\Ecr`, PHP >= 8.1). The package connects a merchant's till to an Amwal POS terminal over Wi-Fi, over a USB cable, or through the Amwal Hub (ECR Web Service). For every public class, enum, interface, constant, constructor and method it gives the signature, what it returns and what it throws. Everything under `AmwalPay\Ecr\Internal\`, and anything marked `@internal`, is not API and can change without notice.
 
-> **Amounts are never floats.** Pass an amount as a decimal string in major units (`'1.234'`) or as a whole number of major units (`5`), or as an `Amount`. A float cannot hold `1.005` exactly, so the SDK does not accept one.
+> **Amounts are major units.** Pass a decimal string (`'1.234'`), a whole number (`5`), a float (read through its shortest exact form, so `1.005` stays `1.005`) or an `Amount`. Text that is not a number throws `InvalidRequestException`.
 
 ## Contents
 
 - [Sessions](#sessions): `EcrSessions`, `EcrSessionPlan`, `EcrOpenedSession`
 - [Configuration](#configuration): `EcrConfig`, `EcrEnvironment`, `EcrSdk`, `Amount`
-- [Links](#links): `Link\EcrLink`, `Link\LanLink`, `Link\WebServiceLink`
+- [Links](#links): `Link\EcrLink`, `Link\LanLink`, `Link\UsbCableLink`, `Link\WebServiceLink`
 - [Terminals](#terminals): `EcrTerminal`, `EcrWebServiceTerminal`, `EcrReachability`
-- [Results](#results): `EcrResult`, `EcrInquiry`, `EcrReceipt`, `EcrReceiptClosed` families, `EcrTransaction`, `NextStep`
+- [Results](#results): `EcrResult`, `EcrInquiry`, `EcrReceipt`, `EcrReceiptClosed`, `EcrSettlement` families, `EcrTransaction`, `NextStep`
 - [Failures](#failures): `Failure\*`
 - [Exceptions](#exceptions): `Exception\*`
 - [Safety](#safety): `FinancialGuard`, `JournalEntry`, `TransactionJournal`, `FileTransactionJournal`, `TerminalLock`, `FileTerminalLock`
 - [Logging](#logging): `Log\*`
-- [Channel](#channel): `EcrChannel`, `TcpEcrChannel`, `EcrFrames`, `EcrIOException`, `EcrChannelTimeout`
+- [Channel](#channel): `EcrChannel`, `TcpEcrChannel`, `SerialEcrChannel`, `EcrFrames`, `EcrIOException`, `EcrChannelTimeout`
+- [Serial (USB cable)](#serial-usb-cable): `SerialPorts`, `SerialPortChoice`, `ConnectedPorts`, `SerialPortBinding`, `SerialLine`, `SerialLines`, `WindowsSerialLine`, `PosixSerialLine`
 - [Web Service](#web-service): `WebServiceRequests`, `WebServiceSecureHash`, `WebServiceRoutes`, `WebServiceOperation`, `WebServiceApi`, `Http\*`
 - [EcrWireResponse](#ecrwireresponse)
 - [EcrTransactionType](#ecrtransactiontype)
@@ -25,7 +26,7 @@ This page lists the public API of the Composer package `amwalpay/ecr-php` (names
 
 ## Sessions
 
-The way in. Validate a link and its credentials into a plan, then open one session for that plan. The session handles every operation the same way over Wi-Fi and Web Service.
+The way in. Validate a link and its credentials into a plan, then open one session for that plan. The session handles every operation the same way over Wi-Fi, USB cable and Web Service.
 
 ### `EcrSessions`
 
@@ -35,18 +36,27 @@ namespace AmwalPay\Ecr;
 final class EcrSessions
 {
     public static function plan(EcrLink $link, EcrConfig $config, #[\SensitiveParameter] ?string $rawSecureHashKey = null): EcrSessionPlan;
-    public static function open(string $terminalSerial, EcrSessionPlan $plan, ?EcrLogger $logger = null, ?HttpTransport $httpTransport = null): EcrOpenedSession;
-    public static function lanTerminal(string $terminalSerial, EcrSessionPlan $plan, ?EcrLogger $logger = null): EcrTerminal;
-    public static function webServiceTerminal(string $terminalSerial, EcrSessionPlan $plan, ?EcrLogger $logger = null, ?HttpTransport $httpTransport = null): EcrWebServiceTerminal;
+    public static function open(
+        string $terminalSerial,
+        EcrSessionPlan $plan,
+        ?EcrLogger $logger = null,
+        ?HttpTransport $httpTransport = null,
+        ?FinancialGuard $guard = null,
+        ?\Closure $usbChannel = null,      // Closure(): EcrChannel
+    ): EcrOpenedSession;
+    public static function lanTerminal(string $terminalSerial, EcrSessionPlan $plan, ?EcrLogger $logger = null, ?FinancialGuard $guard = null): EcrTerminal;
+    public static function usbCableTerminal(string $terminalSerial, EcrSessionPlan $plan, EcrChannel $channel, ?EcrLogger $logger = null, ?FinancialGuard $guard = null): EcrTerminal;
+    public static function webServiceTerminal(string $terminalSerial, EcrSessionPlan $plan, ?EcrLogger $logger = null, ?HttpTransport $httpTransport = null, ?FinancialGuard $guard = null): EcrWebServiceTerminal;
     public static function newMerchantReference(): string;
 }
 ```
 
 | Method | Returns | Notes |
 |---|---|---|
-| `plan()` | `EcrSessionPlan` | Validates `$link` and `$config` without opening a connection. Problems come back as the plan's `issues()` instead of exceptions, so a settings screen can show what is missing. `$rawSecureHashKey` is the key as the operator typed it: it is trimmed and checked here, and defaults to the config's key. For a `LanLink`, the link's port replaces the config's port. For a `WebServiceLink`, the merchant and terminal IDs are copied into the config. If the response timeout is still the Wi-Fi default, it becomes `EcrConfig::WEB_SERVICE_RESPONSE_TIMEOUT` (130 s). Hosts and IDs are kept as given; an ID is numeric when `long.TryParse` would read it (surrounding white space and a sign are allowed). A missing signing key is reported as an issue. Throws `\InvalidArgumentException` only for a link type it does not support. |
-| `open()` | `EcrOpenedSession` | Opens the transport the plan describes. There is one dispatch for Wi-Fi and Web Service, so sale, inquiry and recovery always build the same client. `$terminalSerial` is the terminal's serial number as registered. `$httpTransport` applies to Web Service only and sets how the HTTPS post is made; `null` uses cURL. `$logger` defaults to `EcrLogger::none()`. **Throws** `\InvalidArgumentException` if the plan has issues. The serial is sent as given. |
+| `plan()` | `EcrSessionPlan` | Validates `$link` and `$config` without opening a connection. Problems come back as the plan's `issues()` instead of exceptions, so a settings screen can show what is missing. `$rawSecureHashKey` is the key as the operator typed it: it is trimmed and checked here, and defaults to the config's key. For a `LanLink`, the link's port replaces the config's port. For a `WebServiceLink`, the merchant and terminal IDs are copied into the config. If the response timeout is still the Wi-Fi default, it becomes `EcrConfig::WEB_SERVICE_RESPONSE_TIMEOUT` (130 s). Hosts and IDs are kept as given; an ID is numeric when `long.TryParse` would read it (surrounding white space and a sign are allowed). A `UsbCableLink` has nothing to validate: whether a cable is plugged in is answered by the probe. A missing signing key is reported as an issue (`Wi-Fi/CABLE secure hash key is not configured` for Wi-Fi and USB). Throws `\InvalidArgumentException` only for a link type it does not support. |
+| `open()` | `EcrOpenedSession` | Opens the transport the plan describes. There is one dispatch for Wi-Fi, USB cable and Web Service, so sale, inquiry and recovery always build the same client. `$terminalSerial` is the terminal's serial number as registered. `$httpTransport` applies to Web Service only and sets how the HTTPS post is made; `null` uses cURL. `$guard` replaces the file-based guard built from the config. `$usbChannel` is required for a USB cable plan and ignored otherwise: it builds the channel, e.g. `fn () => new SerialEcrChannel('COM8')`. `$logger` defaults to `EcrLogger::none()`. **Throws** `\InvalidArgumentException` if the plan has issues, `\LogicException` ("USB cable sessions require a channel factory") for a cable plan without `$usbChannel`. The serial is sent as given. |
 | `lanTerminal()` | `EcrTerminal` | Builds the Wi-Fi terminal directly. Throws `\InvalidArgumentException` if the plan is not for Wi-Fi. |
+| `usbCableTerminal()` | `EcrTerminal` | Builds the terminal down a USB cable on `$channel`. Everything above the channel is identical to Wi-Fi. Throws `\InvalidArgumentException` if the plan is not for USB cable. |
 | `webServiceTerminal()` | `EcrWebServiceTerminal` | Builds the Web Service terminal directly. Throws `\InvalidArgumentException` if the plan is not for Web Service. |
 | `newMerchantReference()` | `string` | A fresh merchant reference in the SDK's own format: 12 uppercase hex characters. Generate it, save it with the order, then send it. |
 
@@ -81,6 +91,7 @@ final class EcrSessionPlan
     public function isReady(): bool;
     public function usesLan(): bool;
     public function usesWebService(): bool;
+    public function usesUsbCable(): bool;
     public function signingKeyLabel(): string;
     public function signingKeyConfigured(): bool;
     public function connectionSummary(): string;
@@ -89,14 +100,14 @@ final class EcrSessionPlan
 
 - `issues()`: what is wrong with this plan; empty when it can be opened.
 - `isReady()`: `true` when `issues()` is empty.
-- `usesLan()` / `usesWebService()`: which kind of link the plan uses.
-- `signingKeyLabel()`: which of the two secrets this plan expects. Wi-Fi and Web Service keys are issued separately.
+- `usesLan()` / `usesUsbCable()` / `usesWebService()`: which kind of link the plan uses.
+- `signingKeyLabel()`: which of the two secrets this plan expects: `Wi-Fi/CABLE secure hash key` (Wi-Fi and USB) or `Web Service secure hash key`. They are issued separately.
 - `signingKeyConfigured()`: whether the resolved config has a key.
-- `connectionSummary()`: a summary for the operator that never contains a secret, e.g. `192.168.1.50:9100` or `UAT · merchant 10001 · terminal 20002`. Throws `\LogicException` for a link type it does not support.
+- `connectionSummary()`: a summary for the operator that never contains a secret, e.g. `192.168.1.50:9100`, `COM8` (`USB cable` when no port is chosen) or `UAT · merchant 10001 · terminal 20002`. Throws `\LogicException` for a link type it does not support.
 
 ### `EcrOpenedSession`
 
-One opened transport for a validated plan. Every sale, void, refund, inquiry, e-receipt and close receipt for that terminal goes through it, the same way over Wi-Fi and Web Service. Get one from `EcrSessions::open()`. The constructor is `@internal`.
+One opened transport for a validated plan. Every sale, void, refund, inquiry, e-receipt, close receipt and settlement for that terminal goes through it, the same way over Wi-Fi, USB cable and Web Service. Get one from `EcrSessions::open()`. The constructor is `@internal`.
 
 ```php
 final class EcrOpenedSession
@@ -106,9 +117,11 @@ final class EcrOpenedSession
     public function usesWebService(): bool;
     public function usesLocalTerminal(): bool;
     public function supportsReceipt(): bool;
+    public function supportsSettlement(): bool;
     public function lanTerminal(): ?EcrTerminal;
     public function webServiceTerminal(): ?EcrWebServiceTerminal;
     public function probeReachability(): ?EcrReachability;
+    public function checkReachability(): ?EcrReachability;
 
     public function sale(string|int|Amount $amount, string $merchantReference = ''): EcrResult;
     public function void(string $receiptNumber, string $originalTerminalId = '', string $merchantReference = ''): EcrResult;
@@ -117,6 +130,7 @@ final class EcrOpenedSession
     public function inquireByReference(string $originalReference, string $transactionDate = '', string $originalTerminalId = '', string $merchantReference = ''): EcrInquiry;
     public function receipt(string $receiptNumber, string $transactionDate, string $originalTerminalId = ''): EcrReceipt;
     public function closeReceipt(string $merchantReference = '', string $originalMerchantReference = ''): EcrReceiptClosed;
+    public function settlement(string $merchantReference = ''): EcrSettlement;
 
     public function terminalKey(): string;
     public function guard(): FinancialGuard;
@@ -128,18 +142,21 @@ final class EcrOpenedSession
 
 | Method | Returns | Notes |
 |---|---|---|
-| `usesWebService()` / `usesLocalTerminal()` | `bool` | Which transport the session uses. |
-| `supportsReceipt()` | `bool` | Receipt URLs exist only on Wi-Fi. |
-| `lanTerminal()` | `?EcrTerminal` | The Wi-Fi terminal behind the session, or `null` on Web Service. |
-| `webServiceTerminal()` | `?EcrWebServiceTerminal` | The Web Service terminal behind the session, or `null` on Wi-Fi. |
-| `probeReachability()` | `?EcrReachability` | Checks before a sale whether the Wi-Fi port answers. Always `null` on Web Service, because the Hub has no probe. |
+| `usesWebService()` / `usesLocalTerminal()` | `bool` | Which transport the session uses. Wi-Fi and USB cable are both the local terminal. |
+| `supportsReceipt()` | `bool` | Receipt URLs exist only on the local protocol (Wi-Fi and USB cable). |
+| `supportsSettlement()` | `bool` | Always `true`: Wi-Fi and USB send `SETTLEMENT`, Web Service posts `/Ecr/settle`. |
+| `lanTerminal()` | `?EcrTerminal` | The Wi-Fi or USB cable terminal behind the session, or `null` on Web Service. |
+| `webServiceTerminal()` | `?EcrWebServiceTerminal` | The Web Service terminal behind the session, or `null` on Wi-Fi and USB. |
+| `probeReachability()` | `?EcrReachability` | Checks before a sale whether the Wi-Fi port or the cable's COM port answers. Always `null` on Web Service, so a sale is never held for a Hub probe. |
+| `checkReachability()` | `?EcrReachability` | Web Service: posts `/Ecr/CheckReachability` with `probeTimeout` as its whole deadline. `null` on Wi-Fi and USB. A sale does not call it. |
 | `sale()` | `EcrResult` | `$amount` is in major units: a string such as `"1.234"`, an int or a float. `$merchantReference` is this attempt's own reference: save it before calling. |
 | `void()` | `EcrResult` | `$originalTerminalId` is used on Wi-Fi only; Web Service uses the terminal in the plan. |
 | `refund()` | `EcrResult` | `$transactionDate` is the original transaction's day as `yyyyMMdd`. `$originalTerminalId` is used on Wi-Fi only. |
 | `inquire()` | `EcrInquiry` | Looks up a transaction by receipt number and date. `$originalTerminalId` is used on Wi-Fi only. |
 | `inquireByReference()` | `EcrInquiry` | Reads the attempt you sent as `$originalReference`. Use it to get the result of a sale, void or refund that never answered. `$originalTerminalId` is used on Wi-Fi only. |
 | `receipt()` | `EcrReceipt` | Wi-Fi only. On Web Service it returns `ReceiptUnavailable` ("Receipt fetch is only supported over Wi-Fi ECR"). |
-| `closeReceipt()` | `EcrReceiptClosed` | Asks the terminal to put its receipt away and return to idle. Call it from the till's Close receipt action, never automatically. Pass both arguments by name, since both are strings. `$merchantReference` is this close request's own ID; when blank, one is generated. `$originalMerchantReference` is the sale, void or refund being dismissed; Web Service requires it and Wi-Fi ignores it. On Web Service, if only `$merchantReference` is given, it is used as the original and the SDK generates the close request's own ID. If neither is given, the result is `CloseReceiptFailed` with an `Invalid` failure. |
+| `closeReceipt()` | `EcrReceiptClosed` | Asks the terminal to put its receipt away and return to idle. Call it from the till's Close receipt action, never automatically. Pass both arguments by name, since both are strings. `$merchantReference` is this close request's own ID; when blank, one is generated. `$originalMerchantReference` is the sale, void or refund being dismissed; Web Service requires it and Wi-Fi ignores it. On Web Service, if only `$merchantReference` is given, it is used as the original and the SDK generates the close request's own ID. If neither is given, the result is `CloseReceiptFailed` with a `Malformed` failure. |
+| `settlement()` | `EcrSettlement` | Closes the current batch. Wi-Fi and USB send `SETTLEMENT`; Web Service posts `/Ecr/settle`. Confirm with the cashier first: the close starts as soon as the request arrives. Uses the full response timeout. Safe to repeat when the answer is lost. Never blocked by the guard. |
 | `terminalKey()` | `string` | Identifies this terminal to the guard's lock and journal. |
 | `guard()` | `FinancialGuard` | The guard the terminal uses. |
 | `pendingOutcomes()` | `list<JournalEntry>` | Sales, voids and refunds on this terminal whose outcome is still unknown. While any are listed, a new money-moving call returns `Failed` with `Failure\Unresolved`. |
@@ -325,7 +342,7 @@ final class Amount
 
 ## Links
 
-A link says how this till reaches a POS terminal. The app supplies addresses and backend IDs; the SDK handles the protocol, signing and transport. The PHP SDK does not support a USB cable connection.
+A link says how this till reaches a POS terminal. The app supplies addresses and backend IDs; the SDK handles the protocol, signing and transport.
 
 ```php
 namespace AmwalPay\Ecr\Link;
@@ -340,6 +357,11 @@ final class LanLink extends EcrLink
     );
 }
 
+final class UsbCableLink extends EcrLink
+{
+    public function __construct(public readonly string $comPort = '');
+}
+
 final class WebServiceLink extends EcrLink
 {
     public function __construct(
@@ -349,8 +371,9 @@ final class WebServiceLink extends EcrLink
 }
 ```
 
-- `EcrLink`: the base type, either `LanLink` (Wi-Fi/LAN) or `WebServiceLink` (the Amwal Hub over HTTPS).
+- `EcrLink`: the base type: `LanLink` (Wi-Fi), `UsbCableLink` (a USB cable) or `WebServiceLink` (the Amwal Hub over HTTPS).
 - `LanLink`: TCP to the IP address and port the terminal shows on its idle screen. The till and the terminal must be on the same network. `$host` is a host name or IP address; only a blank one is a plan issue.
+- `UsbCableLink`: a USB cable straight from this till to the terminal. `$comPort` is the virtual serial port the operating system assigned to it, such as `COM8` ("MediaTek USB VCOM (Android)") or `/dev/ttyACM0`; the line is 115200 8N1. Empty means the operator has not chosen a port yet. The signing key is the Wi-Fi key. Open the session with `usbChannel: fn () => new SerialEcrChannel($port)`.
 - `WebServiceLink`: HTTPS to the Amwal Hub, which relays to the terminal configured for Web Service mode (`ecrMode: 4`). The Hub address comes from `EcrConfig::$environment` and is resolved by the SDK. `$merchantId` and `$terminalId` are the numeric backend IDs, e.g. `'10001'` and `'20002'`.
 
 ---
@@ -361,7 +384,7 @@ The two transport clients behind a session. You usually reach them through `EcrO
 
 ### `EcrTerminal`
 
-A POS terminal reachable over Wi-Fi/LAN. One instance addresses one terminal and holds no connection between calls, so it is cheap to keep and safe to reuse.
+A POS terminal reachable over Wi-Fi, or down a USB cable through a `SerialEcrChannel`: the same signing, messages and answers either way. One instance addresses one terminal and holds no connection between calls, so it is cheap to keep and safe to reuse.
 
 When the config has a key, every request is signed, and every answer must be signed with the same key and echo the request's nonce. Otherwise the answer is discarded as `Failure\Unauthenticated`. Without this check, anything on the network that answers on the terminal's port could claim "approved" for a payment that never happened.
 
@@ -389,6 +412,7 @@ final class EcrTerminal
     public function inquireByReference(string $originalReference, string $transactionDate = '', string $originalTerminalId = '', string $merchantReference = ''): EcrInquiry;
     public function receipt(string $receiptNumber, string $transactionDate, string $originalTerminalId = '', string $merchantReference = ''): EcrReceipt;
     public function closeReceipt(string $merchantReference = ''): EcrReceiptClosed;
+    public function settlement(string $merchantReference = ''): EcrSettlement;
     public function run(EcrTransactionType $type, string|int|Amount|null $amount = null, string $originalStan = '', string $originalTerminalId = '', string $originalDate = '', string $merchantReference = ''): EcrResult;
 
     public static function formatDuration(float $seconds): string;
@@ -407,7 +431,7 @@ Constructor:
 
 | Method | Returns | Notes |
 |---|---|---|
-| `terminalKey()` | `string` | Identifies this physical terminal to the guard's lock and journal (`wifi\|host\|port`). |
+| `terminalKey()` | `string` | Identifies this physical terminal to the guard's lock and journal (`wifi\|host\|port`, or `cable\|com8\|0` on a USB cable). |
 | `isReachable()` | `bool` | Whether the terminal is listening. It proves the port is open, not that the terminal is idle. |
 | `probeReachability()` | `EcrReachability` | Asks the channel whether the terminal is there, before sending anything. Worth calling before a sale: a wrong address then gets an immediate answer instead of a failure the cardholder has to wait through. |
 | `sale()` | `EcrResult` | Takes a payment; the cardholder presents the card at the terminal. `$amount` is in major units: a string, an int or a float. `$merchantReference` is this attempt's own reference: save it before calling. When blank, one is generated. **Throws** `InvalidRequestException`, in which case nothing was sent. |
@@ -417,12 +441,13 @@ Constructor:
 | `inquireByReference()` | `EcrInquiry` | Asks what became of the transaction this till sent as `$originalReference`. Use it for an outcome you never received: after a timeout or a lost connection there is no receipt number to quote, but you still have the reference you sent the request with. **Never retry instead.** `$transactionDate` is optional, because a reference is not scoped to a day; do not fill in "today". **Throws** `InvalidRequestException` if `$originalReference` is blank or malformed. The answer is passed to the guard, which settles the journal entry where it can. |
 | `receipt()` | `EcrReceipt` | Fetches an earlier transaction's e-receipt URL, for a QR code. Non-financial and repeatable. |
 | `closeReceipt()` | `EcrReceiptClosed` | Asks the terminal to put its receipt away and return to its idle screen. Call it from the till's Close receipt action when the cashier is finished, not as a side effect of dismissing a dialog. Firmware too old to know this command answers `CloseReceiptRefused`. |
+| `settlement()` | `EcrSettlement` | Sends `SETTLEMENT`: closes the current batch and prints the settlement receipt. The terminal starts as soon as it arrives, so confirm with the cashier first. Uses the full response timeout, because a close can wait on pending reversals, and raises PHP's time limit for the wait. Safe to repeat when the answer is lost: a batch that closed answers `NothingToSettle` the next time, and one that did not settles on the retry. Never followed by an automatic inquiry or resend. |
 | `run()` | `EcrResult` | Runs any money-moving operation. The typed methods above are the usual way in; this one is for a till that sets the type from its own form. **Throws** `InvalidRequestException` (nothing was sent) if the type does not move money, an amount is missing, or an argument is malformed. The request is built and signed before the guard records anything. |
 | `formatDuration()` | `string` | Formats seconds as `45s`, `2m` or `1m 30s`. |
 
 Arguments follow the Windows SDK. A blank receipt number throws `InvalidRequestException` for a void, refund, inquiry or receipt; otherwise every character that is not a digit is dropped and the rest is padded to six (`24` → `000024`). Dates and the original terminal ID are sent as given when not blank; a refund without a date is sent without one. Amounts are rounded half away from zero and not judged: zero and negative amounts are sent. A merchant reference is at most 32 printable ASCII characters, with no spaces, `&` or `=`; text that is not a number is the only amount refused.
 
-When a Wi-Fi sale, void or refund loses its answer with an unknown outcome and `autoInquireOnFailure` is on, the SDK asks the terminal once, on a fresh connection, what became of the transaction. An inquiry only reads, so this follow-up cannot itself move money. The finding is attached to `Failed::$recovered`; it does not replace the failure, because the exchange still failed.
+When a Wi-Fi or USB sale, void or refund loses its answer with an unknown outcome and `autoInquireOnFailure` is on, the SDK asks the terminal once, on a fresh connection, what became of the transaction. An inquiry only reads, so this follow-up cannot itself move money. The finding is attached to `Failed::$recovered`; it does not replace the failure, because the exchange still failed.
 
 ### `EcrWebServiceTerminal`
 
@@ -451,6 +476,8 @@ final class EcrWebServiceTerminal
     public function inquire(string $receiptNumber, string $transactionDate, string $merchantReference = ''): EcrInquiry;
     public function inquireByReference(string $originalReference, string $transactionDate = '', string $merchantReference = ''): EcrInquiry;
     public function closeReceipt(string $originalMerchantReference, string $merchantReference = ''): EcrReceiptClosed;
+    public function settlement(string $merchantReference = ''): EcrSettlement;
+    public function probeReachability(): EcrReachability;
 
     public static function id(string $text): ?int;
 }
@@ -467,13 +494,15 @@ Constructor: the config is used as given, so the HTTP deadline is `connectTimeou
 | `inquire()` | `EcrInquiry` | By receipt number and date. |
 | `inquireByReference()` | `EcrInquiry` | Looks up the transaction sent as `$originalReference`; use it for an outcome you never received. `$transactionDate` is optional; do not fill in "today", because the Hub filters by that day. Throws `InvalidRequestException` if `$originalReference` is blank or malformed. |
 | `closeReceipt()` | `EcrReceiptClosed` | Posts `/Ecr/closeReceipt` for the sale, void or refund sent as `$originalMerchantReference`. Call it from the Close receipt action; it is never sent automatically. `$merchantReference` is this close request's own ID; when blank, one is generated. A blank original returns `CloseReceiptFailed` with `Malformed`. |
+| `settlement()` | `EcrSettlement` | Posts `/Ecr/settle` with the identity body (no `messageType`). Confirm with the cashier first: the Hub starts the close as soon as the request arrives. The answer is read the same way as a Wi-Fi `SETTLEMENT`. A Hub that never answered (timeout, network error, empty body) is `SettlementFailed` with `ConnectionLost`, not `NotSettled`. |
+| `probeReachability()` | `EcrReachability` | Posts `/Ecr/CheckReachability` with the identity body and `probeTimeout` as the whole deadline, so a Hub that does not answer does not hold the till for a sale's timeout. `reachable` is true when the Hub answers with a success envelope. `host` and `port` are the Hub's, `endpoint` is its origin (`https://test.amwalpg.com:25453`). `EcrOpenedSession::checkReachability()` calls this. |
 | `id()` | `?int` | The ID as `long.TryParse` reads it (white space and a sign allowed), or `null`. |
 
-If `merchantId` or `terminalId` on the config is not numeric, money-moving calls return `Failed` (with an empty merchant reference) and `Failure\Malformed`, inquiries return `InquiryFailed` with `Malformed`, and close receipt returns `CloseReceiptFailed` with `Malformed`, as the Windows SDK. Nothing is sent in any of these cases. Receipt numbers and dates are sent as given (receipt numbers padded); a malformed reference or an amount that is not a number throws `InvalidRequestException`. If a Hub transport failure comes back to an inquiry as an answer with no data, it is reported as `InquiryFailed` (`ConnectionLost`), never as `NotFound`.
+If `merchantId` or `terminalId` on the config is not numeric, money-moving calls return `Failed` (with an empty merchant reference) and `Failure\Malformed`, inquiries return `InquiryFailed` with `Malformed`, close receipt returns `CloseReceiptFailed` with `Malformed`, settlement returns `SettlementFailed` with `Malformed`, and the reachability check returns `reachable: false`, as the Windows SDK. Nothing is sent in any of these cases. Receipt numbers and dates are sent as given (receipt numbers padded); a malformed reference or an amount that is not a number throws `InvalidRequestException`. If a Hub transport failure comes back to an inquiry as an answer with no data, it is reported as `InquiryFailed` (`ConnectionLost`), never as `NotFound`.
 
 ### `EcrReachability`
 
-Whether the terminal's ECR port answers a connection. It proves the port is open, not that the terminal is idle: a terminal already taking a payment answers too.
+Whether the terminal's ECR port (Wi-Fi), its COM port (USB cable) or the Hub (Web Service `CheckReachability`) answers. It proves the link is up, not that the terminal is idle: a terminal already taking a payment answers too. A USB cable reports its COM port as `host` and a port of 0.
 
 ```php
 final class EcrReachability
@@ -704,6 +733,73 @@ final class CloseReceiptFailed extends EcrReceiptClosed
 - **`CloseReceiptRefused`**: the terminal answered and refused, e.g. its firmware is too old for `CLOSE_RECEIPT`. Treat it as "cannot be asked" and carry on; the receipt stays up.
 - **`CloseReceiptFailed`**: the exchange failed. Nothing changed, and the call can be repeated.
 
+### EcrSettlement family
+
+What a settlement came back as: `Settled`, `NothingToSettle`, `NotSettled` or `SettlementFailed`. The till already confirmed with the cashier; this is only the terminal's answer. The terminal's `data.settlementStatus` decides the branch, not the envelope alone: an empty batch is a success with nothing in it, and a refusal before the settlement started (busy, not idle, firmware too old) carries no status at all.
+
+`Settled`, `NothingToSettle` and `NotSettled` correspond to the .NET records of the same names; `SettlementFailed` corresponds to .NET `EcrSettlement.Failed`.
+
+```php
+namespace AmwalPay\Ecr\Result;
+
+abstract class EcrSettlement
+{
+    public function __construct(public readonly string $merchantReference);
+    abstract public function outcome(): string;   // 'settled' | 'nothing_to_settle' | 'not_settled' | 'failed'
+    abstract public function toArray(): array;
+}
+
+final class Settled extends EcrSettlement
+{
+    public function __construct(
+        string $merchantReference,
+        public readonly string $batchId,
+        public readonly string $currency,
+        public readonly string $startTime,
+        public readonly string $endTime,
+        public readonly int $totalTransactions,
+        public readonly string $netAmount,
+        public readonly array $totals,             // array<string, EcrSettlementTotal>
+        public readonly string $raw,
+    );
+}
+
+final class NothingToSettle extends EcrSettlement
+{
+    public function __construct(string $merchantReference, public readonly string $message, public readonly string $raw);
+}
+
+final class NotSettled extends EcrSettlement
+{
+    public function __construct(
+        string $merchantReference,
+        public readonly string $responseCode,
+        public readonly string $status,
+        public readonly string $reason,
+        public readonly ?int $uploadedTransactions,
+        public readonly string $raw,
+    );
+}
+
+final class SettlementFailed extends EcrSettlement
+{
+    public function __construct(string $merchantReference, public readonly Failure $failure);
+}
+
+final class EcrSettlementTotal
+{
+    public function __construct(public readonly int $count, public readonly string $amount);
+    public function toArray(): array;   // {count, amount}
+}
+```
+
+| Result | When | Fields |
+|---|---|---|
+| **`Settled`** | `success` and `settlementStatus` `SETTLED`. The batch closed. | Amounts are major units (`netAmount` `000000012500` with 3 digits reads `12.500`). `totals` always has `SALE`, `REFUND`, `VOID`, `PRE_AUTH`, `CAPTURE`, in that order, with `EcrSettlementTotal(0, '0.000')` where the terminal omitted a row. `totalTransactions` and counts are read as `int.TryParse` reads them; unreadable counts are 0. |
+| **`NothingToSettle`** | `success` and `settlementStatus` `NO_TRANSACTIONS`. | `message`: the terminal's text, or "There are no transactions to settle". |
+| **`NotSettled`** | Anything else that answered: `success: false`, no `data`, or another status (e.g. `MISMATCH`). The batch is still open. | `responseCode`, `status` (empty when the terminal refused before starting), `reason` (`errorList` first, then `message`, else "The batch was not settled"), `uploadedTransactions` (`null` when absent). |
+| **`SettlementFailed`** | The exchange failed: timeout, lost connection or cable, unreadable or unauthenticated answer, a Hub that never answered, or missing Web Service IDs (`Malformed`, nothing sent). | `failure`. The batch may or may not have closed; repeating the call is safe. |
+
 ### `EcrTransaction`
 
 A transaction as the terminal's backend records it. Found in `Found::$transaction`.
@@ -843,7 +939,7 @@ Payment-safety rules for a PHP till that serves many requests at once. They are 
 3. **No new money movement while an outcome is unknown.** After a timeout, a lost connection, or an unreadable or unauthenticated answer, the reference is kept as unresolved. The next sale, void or refund on that terminal gets `Unresolved` until an inquiry by reference settles it, or an operator settles it with `markResolved()`.
 4. **The reference is saved before the request leaves**, so a PHP process killed mid-wait leaves an unresolved entry, not a forgotten payment.
 
-Inquiries, receipts and close receipt move no money and are never blocked. The Windows SDK leaves these rules to the till (its web sample enforces rule 1); the PHP SDK enforces them by default.
+Inquiries, receipts, close receipt, settlement and reachability checks are never blocked. The Windows SDK leaves these rules to the till (its web sample enforces rule 1); the PHP SDK enforces them when `guardFinancialOperations` is on.
 
 ```php
 namespace AmwalPay\Ecr\Safety;
@@ -861,6 +957,7 @@ final class FinancialGuard
     public static function fromConfig(EcrConfig $config, ?EcrLogger $logger = null): self;
     public function enabled(): bool;
     public function run(string $terminalKey, EcrTransactionType $type, string $reference, string $amountMinorUnits, string $currencyCode, float $budgetSeconds, callable $send): EcrResult;
+    public function protected(float $budgetSeconds, callable $send): mixed;
     public function observeInquiry(string $terminalKey, string $originalReference, EcrInquiry $inquiry): void;
     public function unresolved(string $terminalKey): array;   // list<JournalEntry>
     public function entry(string $terminalKey, string $reference): ?JournalEntry;
@@ -873,6 +970,7 @@ final class FinancialGuard
 | `fromConfig()` | `FinancialGuard` | Uses `FileTransactionJournal` and `FileTerminalLock` in `$config->stateDirectory`, or in an `amwalpay-ecr` folder under the system temp directory if that is `null`. Takes `enabled` and `extendTimeLimit` from the config. |
 | `enabled()` | `bool` | Whether the rules are enforced. |
 | `run()` | `EcrResult` | Runs one sale, void or refund under the rules above. `$terminalKey` identifies the physical terminal (see the terminals' `terminalKey()`). `$reference` is the resolved merchant reference the request will carry. `$budgetSeconds` is the longest the call can take, used for PHP's time limit. `$send` (`callable(): EcrResult`) builds and sends the request. Returns `Failed` with `Busy` or `Unresolved` without calling `$send`. **Throws** `DuplicateMerchantReferenceException`. While `$send` runs, user abort is ignored and, if `extendTimeLimit` is on, the time limit is raised. Approved and declined results are recorded. A failure where nothing was sent removes the entry, so the reference may be used again. A failure with an unknown outcome leaves the entry unresolved. |
+| `protected()` | whatever `$send` returns | Runs `$send` with user abort ignored and, if `extendTimeLimit` is on, PHP's time limit raised to `$budgetSeconds` + 30 s. Applies whether or not the guard is enabled. The terminals use it for settlement, which can wait as long as a sale. |
 | `observeInquiry()` | `void` | Lets an inquiry by reference settle an unresolved entry. A record whose status is Approved or Declined settles it. A record with any other status stays unknown, with a note to confirm by hand. Not found settles nothing, because after a lost answer it does not prove nothing was charged. Does nothing when the guard is disabled. |
 | `unresolved()` | `list<JournalEntry>` | Entries whose outcome is unknown, oldest first. Always empty when the guard is disabled. |
 | `entry()` | `?JournalEntry` | One entry by reference. Always `null` when the guard is disabled. |
@@ -1028,7 +1126,7 @@ final class Redactor
 
 ## Channel
 
-How bytes reach a Wi-Fi terminal, and nothing else. Signing a request, checking the answer and deciding what a response code means all belong to `EcrTerminal`, and work the same however the bytes travel. You need this layer only to supply your own transport, e.g. for tests.
+How bytes reach a Wi-Fi or USB cable terminal, and nothing else. Signing a request, checking the answer and deciding what a response code means all belong to `EcrTerminal`, and work the same however the bytes travel. You need this layer to open a USB cable session (`SerialEcrChannel`), or to supply your own transport, e.g. for tests.
 
 ### `EcrChannel`
 
@@ -1068,6 +1166,28 @@ final class TcpEcrChannel implements EcrChannel
 - `DEFAULT_CONNECT_TIMEOUT`: used when `$connectTimeout` is `null`. Prefer passing `EcrConfig::$connectTimeout`, as `EcrTerminal` does.
 - **Throws** `\InvalidArgumentException` if `$host` is empty.
 - A request too large for a frame fails locally before connecting, so it is never reported as a dropped connection.
+
+### `SerialEcrChannel`
+
+The terminal on the USB virtual serial port the operating system assigned to the cable: 115200 baud, 8 data bits, no parity, 1 stop bit, DTR and RTS on, no handshake, which is what "MediaTek USB VCOM (Android)" enumerates as. The bytes are the same framed messages as Wi-Fi. The port is opened for each exchange and closed after it.
+
+```php
+final class SerialEcrChannel implements EcrChannel
+{
+    public const BAUD_RATE = 115200;
+
+    public function __construct(
+        string $portName,                       // 'COM8', '/dev/ttyACM0'
+        ?\Closure $open = null,                 // Closure(string $port): SerialLine; null: SerialLines::open()
+        ?\Closure $presentNames = null,         // Closure(): list<string>; null: SerialPorts::presentNames()
+    );
+}
+```
+
+- `endpoint()` / `host()`: the port name, or `USB cable` when it is blank. `port()`: always 0.
+- `probe()`: never opens the port (opening and closing drops DTR, which the terminal treats as a hang-up). A blank port answers "Windows has not assigned a COM port to this terminal. Plug it in. The COM number follows the device serial and can change." On Windows, a port the system does not list answers "Windows is not listing COM8. Plug the terminal in. …". Otherwise `null`.
+- `exchange()`: frames the body, opens the port, discards stale bytes left from an earlier exchange, writes the request and reads frames until one carries this request's nonce (a frame answering an earlier request is skipped, not believed). Throws `EcrChannelTimeout` after `$timeout` seconds. A failure to open, set up or drain the port before writing is an `EcrIOException` that reads as `Unreachable` (nothing was sent); a port that fails after the write reads as `ConnectionLost` (outcome unknown).
+- `$open` and `$presentNames` exist so a test can stand in for the port.
 
 ### `EcrFrames`
 
@@ -1110,6 +1230,87 @@ final class EcrChannelTimeout extends EcrIOException {}
 
 ---
 
+## Serial (USB cable)
+
+Finding and opening the COM port a USB cable terminal is on. Namespace `AmwalPay\Ecr\Serial`.
+
+### `SerialPorts`
+
+COM ports this computer can open. Windows labels come from Device Manager (read from the registry with `reg query`), so "MediaTek USB VCOM (Android) (COM8)" can be told apart from other USB serial devices. The macOS `/dev/tty.*` twin of a `/dev/cu.*` port is hidden, and COM ports are ordered by number. Every method that looks at the machine takes an optional `$ports` list, so a till (or a test) can pass one it already has.
+
+```php
+final class SerialPorts
+{
+    public static function listFor(string $saved, string $terminalSerial, ?array $ports = null): ConnectedPorts;
+    public static function portFor(string $saved, ?array $ports = null): SerialPortBinding;
+    public static function list(): array;                 // list<SerialPortChoice>
+    public static function presentNames(): array;         // list<string>
+    public static function preferred(array $ports, string $terminalSerial = ''): string;
+    public static function resolve(string $saved, ?array $ports = null): string;
+    public static function deviceSerialFor(string $portName): string;
+    public static function isDirectPort(string $value): bool;
+}
+```
+
+| Method | Returns | Notes |
+|---|---|---|
+| `listFor()` | `ConnectedPorts` | The ports for the terminal form, and the row to select. A plugged-in device whose USB serial equals `$terminalSerial` wins; then the one matching `$saved` (by selection, name or serial); otherwise `preferred()`. A saved port that is not plugged in is not added to the list. |
+| `portFor()` | `SerialPortBinding` | The COM port a sale opens for `$saved`, and what to store afterwards. A saved COM name is upgraded to the device's USB serial once it is known. An unplugged device serial gives an empty `port`. |
+| `list()` | `list<SerialPortChoice>` | Serial devices plugged in right now, asked of the operating system on every call. Windows: `HKLM\HARDWARE\DEVICEMAP\SERIALCOMM` for live ports, `HKLM\SYSTEM\CurrentControlSet\Enum` for labels and USB serials. Linux: ttys backed by a device in `/sys/class/tty`. macOS: `/dev/tty.*` and `/dev/cu.*`. Never throws; empty when nothing can be read. |
+| `presentNames()` | `list<string>` | The port names only (`SerialPort.GetPortNames()`). |
+| `preferred()` | `string` | The selection to offer first: a matching USB serial, then the Android virtual COM ("VCOM" or "MediaTek" in the label or name), then the first port. |
+| `resolve()` | `string` | The COM port to open for a saved identity. A device serial is looked up again, so a terminal moved to another USB socket opens on its new COM port. A saved COM name or device path is opened as given until the serial is learned. An unplugged device serial returns `""`: a stale COM number may now belong to another device. |
+| `deviceSerialFor()` | `string` | The USB serial of the device that owns this COM port now, or `""`. |
+| `isDirectPort()` | `bool` | Whether the value is a COM name (`COM8`) or a device path (`/dev/…`), as opposed to a USB serial. |
+
+### `SerialPortChoice`, `ConnectedPorts`, `SerialPortBinding`
+
+```php
+final class SerialPortChoice
+{
+    public readonly string $name;           // COM8, /dev/ttyACM0
+    public readonly string $label;          // "COM8 · MediaTek USB VCOM (Android) · device HF4349L000053"; the name when blank
+    public readonly string $deviceSerial;   // USB serial; empty when the COM port follows the socket
+    public function __construct(string $name, string $label, string $deviceSerial = '');
+    public function selection(): string;    // what to store: the device serial, else the name
+    public function toArray(): array;       // {name, label, deviceSerial, selection}
+}
+
+final class ConnectedPorts
+{
+    public readonly array $ports;           // list<SerialPortChoice>, plugged in now
+    public readonly string $selected;       // the selection to store on the terminal
+}
+
+final class SerialPortBinding
+{
+    public readonly string $port;           // COM port to open now; empty when unplugged
+    public readonly string $remember;       // USB serial when known, otherwise the saved COM name
+}
+```
+
+### `SerialLine`, `SerialLines`, `WindowsSerialLine`, `PosixSerialLine`
+
+```php
+interface SerialLine
+{
+    public function write(string $bytes): void;                    // all of it, or EcrIOException
+    public function read(int $maxBytes, float $timeout): string;   // '' when nothing arrived in time
+    public function close(): void;
+}
+
+final class SerialLines
+{
+    public static function open(string $port, int $baudRate = 115200): SerialLine;   // throws EcrIOException
+}
+```
+
+- `SerialLines::open()`: `WindowsSerialLine` on Windows, `PosixSerialLine` elsewhere.
+- **`WindowsSerialLine`**: the COM port through `kernel32` (`CreateFile`, `SetCommState`, `SetCommTimeouts`, `ReadFile`, `WriteFile`) with PHP's FFI extension, because PHP's own streams cannot put a deadline on a COM read. Needs `extension=ffi`, and `ffi.enable=true` under a web server. Without FFI, `open()` throws `EcrIOException` naming the setting. A missing port throws "The port 'COM8' does not exist."; a port another program holds throws "Access to the port 'COM8' is denied. …". Writes time out after 3 s.
+- **`PosixSerialLine`**: opens the device and sets it to raw 8N1 with `stty` on the open descriptor; reads and writes with `stream_select` deadlines.
+
+---
+
 ## Web Service
 
 Building blocks for the ECR Web Service (HTTPS to the Amwal Hub). Sessions use these on their own. Use them directly only when you make the HTTP call yourself or replace the transport. `WebService\WebServiceMessage` and `WebService\WebServiceHttpLog` are `@internal`.
@@ -1128,6 +1329,8 @@ final class WebServiceRequests
     public static function refund(int $merchantId, int $terminalId, string $terminalSerial, int $amountMinorUnits, string $stan, string $originalTransactionDate, string $merchantReference = '', string $currencyCode = '512', string $ecrId = 'ECR01', string $transactionDateTime = '', #[\SensitiveParameter] string $secureHashKey = ''): JsonObject;
     public static function transactionStatus(int $merchantId, int $terminalId, string $terminalSerial, string $stan = '', string $originalTransactionDate = '', string $merchantReference = '', string $currencyCode = '512', string $ecrId = 'ECR01', string $transactionDateTime = '', string $originalMerchantReference = '', #[\SensitiveParameter] string $secureHashKey = ''): JsonObject;
     public static function closeReceipt(int $merchantId, int $terminalId, string $terminalSerial, string $originalMerchantReference, string $merchantReference = '', string $ecrId = 'ECR01', string $transactionDateTime = '', #[\SensitiveParameter] string $secureHashKey = ''): JsonObject;
+    public static function settle(int $merchantId, int $terminalId, string $terminalSerial, string $merchantReference = '', string $currencyCode = '512', string $ecrId = 'ECR01', string $transactionDateTime = '', #[\SensitiveParameter] string $secureHashKey = ''): JsonObject;
+    public static function checkReachability(int $merchantId, int $terminalId, string $terminalSerial, string $merchantReference = '', string $currencyCode = '512', string $ecrId = 'ECR01', string $transactionDateTime = '', #[\SensitiveParameter] string $secureHashKey = ''): JsonObject;
 }
 ```
 
@@ -1135,6 +1338,7 @@ final class WebServiceRequests
 - `$originalTransactionDate`: `yyyyMMdd`.
 - `transactionStatus()`: the inquiry. It looks up by receipt number when `$stan` is set, and otherwise by `$originalMerchantReference`.
 - `closeReceipt()`: the body for `/Ecr/closeReceipt`. `$originalMerchantReference` is the sale, void or refund being dismissed. A blank value throws `\InvalidArgumentException`.
+- `settle()` and `checkReachability()`: the bodies for `/Ecr/settle` and `/Ecr/CheckReachability`. They share one body, in this order: `version`, `merchantId`, `terminalId`, `terminalSerial`, `ecrId`, `merchantReference`, `currencyCode`, `transactionDateTime`, `requestDateTime`, then `secureHashValue` when signed. No `messageType`: the path selects the operation.
 - A blank `$merchantReference` is generated. A blank `$transactionDateTime` uses the machine's local time (`EcrSdk::localTimeZone()`). An empty `$secureHashKey` returns an unsigned body.
 - **Throws** `InvalidRequestException` for a malformed merchant reference, and `\InvalidArgumentException` if the key cannot sign.
 
@@ -1198,6 +1402,8 @@ enum WebServiceOperation: string
     case Refund = '/Ecr/Refund';
     case TransactionStatus = '/Ecr/Inquiry';
     case CloseReceipt = '/Ecr/closeReceipt';
+    case Settle = '/Ecr/settle';
+    case CheckReachability = '/Ecr/CheckReachability';
 
     public function path(): string;
     public function label(): string;
@@ -1205,7 +1411,7 @@ enum WebServiceOperation: string
 }
 ```
 
-- `label()`: `Sale`, `Void`, `Refund`, `Transaction status`, `Close receipt`.
+- `label()`: `Sale`, `Void`, `Refund`, `Transaction status`, `Close receipt`, `Settlement`, `Check reachability`.
 - `forType()`: the REST operation for a transaction type, or `null` if it has none (receipts).
 
 ### `WebServiceApi`
@@ -1219,13 +1425,13 @@ final class WebServiceApi
 
     public function __construct(EcrConfig $config, EcrLogger $logger, ?HttpTransport $http = null);
     public function routes(): WebServiceRoutes;
-    public function postJson(WebServiceOperation $operation, JsonObject $body): JsonObject;
+    public function postJson(WebServiceOperation $operation, JsonObject $body, ?float $deadline = null): JsonObject;
 }
 ```
 
 - `UNKNOWN_OUTCOME_STEP`: the wire value that `NextStep::InquireByMerchantReference` is read from.
 - Constructor: `$http` set to `null` uses `CurlHttpTransport` with `$config->caBundlePath`.
-- `postJson()`: posts `$body` and returns the answer as JSON, never throwing for a transport failure. The deadline is `connectTimeout + responseTimeout`. A transport failure, an empty body or invalid JSON returns an envelope with `nextStep` set. An HTTP error that explains itself (a `message` or `errorList`) is returned as read, as the Windows SDK. An HTTP error with nothing readable gets `nextStep` only when its status is 5xx.
+- `postJson()`: posts `$body` and returns the answer as JSON, never throwing for a transport failure. The deadline is `$deadline` when given (the reachability check passes `probeTimeout`), otherwise `connectTimeout + responseTimeout`. A transport failure, an empty body or invalid JSON returns an envelope with `nextStep` set. An HTTP error that explains itself (a `message` or `errorList`) is returned as read, as the Windows SDK. An HTTP error with nothing readable gets `nextStep` only when its status is 5xx.
 
 ### `Http\HttpTransport`
 
@@ -1323,7 +1529,7 @@ final class EcrWireResponse
 
 ## EcrTransactionType
 
-The operations a terminal can be asked to run. Each type declares what the caller has to supply, so a till's own form can be driven from these flags instead of repeating the rules. What the terminal will accept (whether the original exists, whether it can still be voided) is decided by the terminal. Manual settlement is not offered: it is waiting on the POS-599 contract.
+The operations a terminal can be asked to run. Each type declares what the caller has to supply, so a till's own form can be driven from these flags instead of repeating the rules. What the terminal will accept (whether the original exists, whether it can still be voided) is decided by the terminal.
 
 ```php
 namespace AmwalPay\Ecr;
@@ -1336,6 +1542,7 @@ enum EcrTransactionType: string
     case Inquiry = 'Inquiry';
     case Receipt = 'Receipt';
     case CloseReceipt = 'CloseReceipt';
+    case Settlement = 'Settlement';
 
     public static function menuOptions(): array;   // list<self>
     public function messageType(): string;
@@ -1354,12 +1561,13 @@ enum EcrTransactionType: string
 | `Void` | Cancels an earlier transaction for its full amount. No card is presented. | `VOID` |
 | `Refund` | Returns money against an earlier transaction, in full or in part. The cardholder presents the card. | `REFUND` |
 | `Inquiry` | Asks what became of an earlier transaction. Read-only and safe to repeat. | `INQUIRY` |
-| `Receipt` | Asks for an earlier transaction's e-receipt URL. Wi-Fi only. | `RECEIPT` |
+| `Receipt` | Asks for an earlier transaction's e-receipt URL. Wi-Fi and USB only. | `RECEIPT` |
 | `CloseReceipt` | Asks the terminal to put its receipt away and return to idle. | `CLOSE_RECEIPT` |
+| `Settlement` | Closes the current batch and prints the settlement receipt. Run it with `settlement()`. Web Service: `/Ecr/settle`. | `SETTLEMENT` |
 
-- `menuOptions()`: the operations an operator picks from, in the order a till usually offers them: Sale, Void, Refund, Inquiry. Receipt and CloseReceipt are left out by design.
+- `menuOptions()`: the operations an operator picks from, in the order a till usually offers them: Sale, Void, Refund, Inquiry. Receipt, CloseReceipt and Settlement are left out by design: the till confirms a settlement with the cashier first, because the terminal starts as soon as the message arrives.
 - `messageType()`: the value carried in the message's `messageType` field.
-- `displayName()`: the case value, except `Close receipt` for `CloseReceipt`.
+- `displayName()`: the case value, except `Close receipt` for `CloseReceipt`. Settlement declares nothing for the caller to supply: every flag below is false.
 - `requiresAmount()`: whether the caller supplies an amount (Sale, Refund). A void takes the original's amount, which only the terminal knows.
 - `requiresOriginalStan()`: whether the caller identifies an earlier transaction by its receipt number (STAN): Void, Refund, Inquiry, Receipt.
 - `requiresOriginalDate()`: whether the caller supplies the original's date, because a receipt number is unique only within a terminal's day: Refund, Inquiry, Receipt.

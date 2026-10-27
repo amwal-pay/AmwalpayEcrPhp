@@ -182,5 +182,7 @@ security guard, and a dead worker turning into an unknown outcome with its refer
 - Closing the result dialog acknowledges it, including an unknown outcome; the reference stays in the
   debug log and in the SDK journal.
 - USB cable and Bluetooth can be registered (to match the Android and Windows terminal lists) but not
-  run: the PHP SDK opens Wi-Fi and Web Service only.
+  run, as in the Windows sample. The SDK itself drives a USB cable (`UsbCableLink` with
+  `SerialEcrChannel`, see the [integration guide](../docs/integration-guide.md#6-usb-cable-open-a-session));
+  settlement and the Web Service reachability check are SDK calls this sample does not put on a button.
 - Web Service is not exercised against a real Hub by the tests.

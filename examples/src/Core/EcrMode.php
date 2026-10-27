@@ -9,7 +9,8 @@ namespace AmwalExample\Core;
  * 1 USB cable, 2 Wi-Fi, 3 Bluetooth, 4 Web Service.
  *
  * All four stay registrable so a terminal list matches the Android and Windows
- * samples; the PHP SDK opens Wi-Fi and Web Service only.
+ * samples. Like the Windows sample, this one runs Wi-Fi and Web Service; the SDK
+ * itself also drives a USB cable (`UsbCableLink` + `SerialEcrChannel`).
  */
 enum EcrMode: int
 {

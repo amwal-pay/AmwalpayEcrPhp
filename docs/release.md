@@ -42,12 +42,13 @@ sources always produce the same archive contents.
    SIT till through Composer's `artifact` repository. Run `composer verify-artifact` in the example:
    it must print the stored SHA-256 and *OK: the example runs on the built artifact*.
 4. **SIT evidence**, for each row of the [compatibility matrix](compatibility.md#compatibility-matrix-for-sit),
-   Wi-Fi and Web Service:
+   Wi-Fi, USB cable and Web Service:
    - an approved sale, void and refund, and a declined sale;
    - a timeout or lost answer that ends as an unknown outcome, the terminal blocking the next sale,
      and `reconcile()` settling it with the same result the terminal shows;
    - busy: a second sale on the same terminal while one is running;
-   - close receipt; inquiry by receipt and by reference;
+   - close receipt; inquiry by receipt and by reference; settlement (settled and nothing to settle);
+   - USB cable: the COM port found again after re-plugging; Web Service: check reachability;
    - the log of each, showing masked PAN only and the key only as `configured`.
    Attach it to POS-573.
 5. **Release approval**, then publish the same artifact to the package registry as `1.0.0` after
@@ -76,4 +77,4 @@ sources always produce the same archive contents.
 | Package name, version, repository, support matrix, release/rollback instructions | This page, [compatibility.md](compatibility.md) |
 | Exact artifact consumed by the example and verified in SIT | Example: done (`composer verify-artifact`). SIT: pending |
 | Integration guide and API reference published and linked from the task | Written ([integration-guide.md](integration-guide.md), [api-reference.md](api-reference.md)); publishing and linking: pending |
-| Manual settlement | Blocked on POS-599; not in this release |
+| Settlement, USB cable, Web Service check reachability | Implemented to match the Windows SDK; SIT evidence pending |

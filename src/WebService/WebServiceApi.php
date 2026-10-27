@@ -47,8 +47,12 @@ final class WebServiceApi
         return $this->routes;
     }
 
-    /** Posts `$body` and returns the answer as JSON, never throwing for a transport failure. */
-    public function postJson(WebServiceOperation $operation, JsonObject $body): JsonObject
+    /**
+     * Posts `$body` and returns the answer as JSON, never throwing for a transport failure.
+     *
+     * @param float|null $deadline Seconds for the whole call. Null: connect + answer timeout.
+     */
+    public function postJson(WebServiceOperation $operation, JsonObject $body, ?float $deadline = null): JsonObject
     {
         $started = hrtime(true);
         $payload = Json::write($body);
@@ -57,13 +61,15 @@ final class WebServiceApi
         WebServiceHttpLog::request($this->logger, $operation, $url, $this->config->environment, $payload);
         $this->logSigning($body);
 
-        $deadline = $this->config->connectTimeout + $this->config->responseTimeout;
+        // Connect and read budgets are separate in the terminal API; over HTTP
+        // they are one deadline covering both.
+        $deadline ??= $this->config->connectTimeout + $this->config->responseTimeout;
         try {
             $response = $this->http->post(
                 $url,
                 $payload,
                 ['Content-Type' => 'application/json; charset=utf-8', 'Accept' => 'application/json'],
-                $this->config->connectTimeout,
+                min($this->config->connectTimeout, $deadline),
                 $deadline,
             );
         } catch (HttpTransportException $e) {

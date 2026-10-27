@@ -5,6 +5,49 @@ package uses semantic versioning. Pin an exact version and read the entry before
 
 ## 1.0.0-rc.1 (2026-10-25)
 
+### Added (2026-10-27): what `AmwalPay.Ecr` (.NET) added after 1.0.2
+
+No existing method changed signature or was removed. Wire formats of the existing operations are
+unchanged.
+
+- **Settlement**, which closes the terminal's current batch and prints the settlement receipt:
+  - Wi-Fi / USB cable: `EcrTerminal::settlement($merchantReference)` sends `SETTLEMENT`.
+  - Web Service: `EcrWebServiceTerminal::settlement($merchantReference)` posts `/Ecr/settle` with the
+    identity body (no `messageType`).
+  - Either transport: `EcrOpenedSession::settlement()`, and `supportsSettlement()` (always true).
+  - Result family `Result\EcrSettlement`: `Settled` (batch ID, currency, times, total count, net
+    amount and `SALE`/`REFUND`/`VOID`/`PRE_AUTH`/`CAPTURE` totals in major units), `NothingToSettle`,
+    `NotSettled` (response code, `settlementStatus`, reason, uploaded count) and `SettlementFailed`;
+    `Result\EcrSettlementTotal`.
+  - `EcrTransactionType::Settlement` (`SETTLEMENT`). It is not in `menuOptions()`, and `run()` still
+    accepts only the three that move money. Affected: an exhaustive `match` over the enum. Action:
+    add a case.
+  - Uses the full response timeout, raises PHP's time limit for the wait, is never blocked by the
+    guard, and is never followed by an automatic inquiry or resend.
+- **Web Service check reachability**: `EcrOpenedSession::checkReachability()` /
+  `EcrWebServiceTerminal::probeReachability()` post `/Ecr/CheckReachability` with `probeTimeout` as
+  the whole deadline. `probeReachability()` on a Web Service session still returns `null`, so a sale is
+  never held for a Hub probe.
+- `WebServiceRequests::settle()` and `::checkReachability()`, `WebServiceOperation::Settle` and
+  `::CheckReachability`, and an optional `$deadline` on `WebServiceApi::postJson()`.
+- **USB cable**, over the serial COM port the cable appears as ("MediaTek USB VCOM (Android)",
+  115200 8N1):
+  - `Link\UsbCableLink($comPort)`; `EcrSessionPlan::usesUsbCable()`; `connectionSummary()` names the
+    port. The plan expects the Wi-Fi key.
+  - `EcrSessions::open(..., usbChannel: fn () => new SerialEcrChannel($port))` (required for a cable
+    plan) and `EcrSessions::usbCableTerminal()`.
+  - `Channel\SerialEcrChannel`: one exchange per port open, stale bytes discarded, answers to another
+    nonce skipped, probe without opening the port.
+  - `Serial\SerialPorts` (`list()`, `listFor()`, `portFor()`, `resolve()`, `preferred()`, ...) with
+    `SerialPortChoice`, `ConnectedPorts` and `SerialPortBinding`, so a till stores the terminal's USB
+    serial and finds its COM port again after Windows renumbers it.
+  - Windows uses PHP's FFI extension (`extension=ffi`, `ffi.enable=true` under a web server); Linux
+    and macOS use `stty`. Without FFI on Windows a cable sale is `Unreachable` and nothing is sent.
+  - The USB accessory (AOA over WinUSB/libusb) channel of the .NET repository is not ported: see
+    [docs/parity.md](docs/parity.md), difference 10.
+- `FinancialGuard::protected()` is public, so a non-financial wait can be shielded from PHP's time
+  limit.
+
 ### Fixed (2026-10-26)
 
 - `transactionDateTime` (and Web Service `requestDateTime`) is now the machine's local time, as
@@ -60,5 +103,4 @@ SIT evidence and release approval are complete (see [docs/release.md](docs/relea
 
 ### Not included
 
-- Manual settlement: blocked until the POS-599 contract is final and versioned.
-- USB/cable transport.
+- Bluetooth, and the USB accessory (AOA) channel: not offered by the Windows SDK's documented API either.

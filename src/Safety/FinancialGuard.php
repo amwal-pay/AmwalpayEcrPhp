@@ -238,11 +238,15 @@ final class FinancialGuard
 
     /**
      * Runs `$send` so that neither PHP's time limit nor a browser that gives up
-     * can kill it between sending the request and reading the answer.
+     * can kill it between sending the request and reading the answer. Applies
+     * whether or not the guard is enabled; used for settlement too, which can
+     * wait as long as a sale.
      *
-     * @param callable(): EcrResult $send
+     * @template T
+     * @param callable(): T $send
+     * @return T
      */
-    private function protected(float $budgetSeconds, callable $send): EcrResult
+    public function protected(float $budgetSeconds, callable $send): mixed
     {
         $previousAbort = ignore_user_abort(true);
         if ($this->extendTimeLimit) {

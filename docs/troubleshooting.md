@@ -8,7 +8,7 @@ what was sent and received, with the key shown only as `configured`.
 
 | Symptom | Cause and fix |
 |---|---|
-| `plan->issues()`: *Wi-Fi/CABLE secure hash key is not configured* / *Web Service secure hash key is not configured* | The key for **this link** is empty. Wi-Fi and Web Service use different keys; check which one `signingKeyLabel()` names. |
+| `plan->issues()`: *Wi-Fi/CABLE secure hash key is not configured* / *Web Service secure hash key is not configured* | The key for **this link** is empty. Wi-Fi and USB cable share the Wi-Fi key; Web Service uses a different one. Check which one `signingKeyLabel()` names. |
 | *Secure hash key must be an even-length hex string of at least 16 characters* | A space, a newline, a missing character, or a key that is not hex. Paste it again from Amwal. |
 | *Merchant ID must be numeric* / *Terminal ID must be numeric* | Web Service IDs are plain digits. |
 | `InvalidArgumentException` from `new EcrConfig(...)` | The message names the setting: digits 0 to 4, port 1 to 65535, timeouts positive, key hex, timezone an identifier like `Asia/Muscat`. |
@@ -34,6 +34,28 @@ what was sent and received, with the key shown only as `configured`.
 | `ConnectionLost` | Wi-Fi dropped or the terminal restarted mid-transaction. Same as a timeout. |
 | `CloseReceiptRefused` | Firmware without `CLOSE_RECEIPT`. The receipt stays up; press back on the terminal. |
 | `ReceiptUnavailable` *The receipt could not be generated* | The backend has not published one. Try again later; the transaction is unaffected. |
+
+## USB cable
+
+| Symptom | Cause and fix |
+|---|---|
+| `\LogicException` *USB cable sessions require a channel factory* | Pass `usbChannel: fn () => new SerialEcrChannel($port)` to `EcrSessions::open()`. |
+| `Unreachable` *USB cable on Windows needs PHP's FFI extension* | Add `extension=ffi` to php.ini. Under IIS or Apache also set `ffi.enable=true` (the default `preload` allows FFI on the command line only). Restart the web server. |
+| `Unreachable` *Windows has not assigned a COM port to this terminal* | No port is chosen. Plug the terminal in and pick it from `SerialPorts::listFor()`. |
+| Probe: *Windows is not listing COM8* / `Unreachable` *The port 'COM8' does not exist.* | The cable is unplugged, or Windows gave the terminal another COM number. Store `SerialPortChoice::selection()` (the USB serial) and open `SerialPorts::portFor($saved)->port` for each sale. |
+| `Unreachable` *Access to the port 'COM8' is denied* | Another program (or another PHP request) has the port open. Only one process can hold a COM port: close the other program, run cable payments from one worker, or turn the guard on so a second request gets `Busy`. |
+| The terminal is not listed at all | The MediaTek USB VCOM driver is missing: Device Manager shows an unknown device. Install the driver from Amwal. Linux: the PHP user needs the `dialout` group for `/dev/ttyACM0`. |
+| `Timeout` on every cable sale | The terminal profile is not USB cable, or the cable is charge-only. Check the ECR mode on the terminal and use a data cable. |
+| `ConnectionLost` on a cable sale | The cable was pulled or the terminal restarted after the request was written. Outcome unknown: the SDK inquires once; reconcile if it is still unknown. |
+
+## Settlement
+
+| Symptom | Cause and fix |
+|---|---|
+| `NotSettled`, `responseCode` `96`, empty `status` | The terminal is busy or not on its idle screen. Finish or close the current screen (`closeReceipt()`), then settle again. |
+| `NotSettled`, `status` `MISMATCH` | The terminal's and the host's counts differ; `uploadedTransactions` says how many went up. The batch is still open: contact Amwal before settling again. |
+| `NotSettled` with no status from an older terminal | The firmware does not know `SETTLEMENT`. Settle from the terminal's own menu. |
+| `SettlementFailed` | The answer was lost. The batch may or may not have closed. Settling again is safe: a closed batch answers `NothingToSettle`. |
 
 ## Web Service
 

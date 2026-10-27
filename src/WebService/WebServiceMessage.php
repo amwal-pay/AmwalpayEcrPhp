@@ -41,6 +41,9 @@ final class WebServiceMessage
         string $merchantReference = '',
         string $transactionDateTime = '',
     ): array {
+        if ($type === EcrTransactionType::Settlement) {
+            return self::buildPlain($merchantId, $terminalId, $terminalSerial, $secureHashKey, $currencyCode, $ecrId, $merchantReference, $transactionDateTime);
+        }
         if ($type === EcrTransactionType::CloseReceipt) {
             return self::buildCloseReceipt($merchantId, $terminalId, $terminalSerial, $secureHashKey, $ecrId, $merchantReference, $originalMerchantReference, $transactionDateTime);
         }
@@ -127,6 +130,39 @@ final class WebServiceMessage
             ->set('transactionDateTime', $wireDateTime)
             ->set('requestDateTime', $wireDateTime)
             ->set('originalMerchantReference', MerchantReference::resolve($originalMerchantReference));
+
+        return [$reference, $secureHashKey === '' ? $body : WebServiceSecureHash::withHash($body, $secureHashKey)];
+    }
+
+    /**
+     * Hub `/Ecr/settle` and `/Ecr/CheckReachability` share this body: identity,
+     * currency, both timestamps, then `secureHashValue`. The path selects the
+     * operation, so there is no `messageType`.
+     *
+     * @return array{0: string, 1: JsonObject}
+     */
+    public static function buildPlain(
+        int $merchantId,
+        int $terminalId,
+        string $terminalSerial,
+        #[\SensitiveParameter] string $secureHashKey,
+        string $currencyCode = '512',
+        string $ecrId = 'ECR01',
+        string $merchantReference = '',
+        string $transactionDateTime = '',
+    ): array {
+        $reference = MerchantReference::resolve($merchantReference);
+        $wireDateTime = $transactionDateTime !== '' ? $transactionDateTime : self::now();
+        $body = (new JsonObject())
+            ->set('version', EcrMessage::PROTOCOL_VERSION)
+            ->set('merchantId', $merchantId)
+            ->set('terminalId', $terminalId)
+            ->set('terminalSerial', $terminalSerial)
+            ->set('ecrId', $ecrId)
+            ->set('merchantReference', $reference)
+            ->set('currencyCode', $currencyCode)
+            ->set('transactionDateTime', $wireDateTime)
+            ->set('requestDateTime', $wireDateTime);
 
         return [$reference, $secureHashKey === '' ? $body : WebServiceSecureHash::withHash($body, $secureHashKey)];
     }

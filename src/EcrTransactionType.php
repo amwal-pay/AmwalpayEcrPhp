@@ -11,8 +11,6 @@ namespace AmwalPay\Ecr;
  * driven from these flags rather than repeating the rules. What the terminal
  * will accept (whether the original exists, whether it is still voidable) is
  * answered by the terminal.
- *
- * Manual settlement is not offered: it waits on the POS-599 contract.
  */
 enum EcrTransactionType: string
 {
@@ -35,8 +33,17 @@ enum EcrTransactionType: string
     case CloseReceipt = 'CloseReceipt';
 
     /**
+     * Closes the terminal's current batch and prints the settlement receipt.
+     * Run it with {@see EcrTerminal::settlement()} or
+     * {@see EcrOpenedSession::settlement()}. Not a menu choice: the till
+     * confirms with the cashier first, because the terminal starts as soon as
+     * the message arrives.
+     */
+    case Settlement = 'Settlement';
+
+    /**
      * The operations an operator picks from, in the order a till usually
-     * offers them. Receipt and CloseReceipt are absent by design.
+     * offers them. Receipt, close receipt and settlement are absent by design.
      *
      * @return list<self>
      */
@@ -55,6 +62,7 @@ enum EcrTransactionType: string
             self::Inquiry => 'INQUIRY',
             self::Receipt => 'RECEIPT',
             self::CloseReceipt => 'CLOSE_RECEIPT',
+            self::Settlement => 'SETTLEMENT',
         };
     }
 

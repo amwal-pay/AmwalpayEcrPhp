@@ -1,15 +1,18 @@
 # Wire protocol
 
 What `amwalpay/ecr-php` puts on the wire and how it reads the answers. It is the same contract as
-`AmwalPay.Ecr` 1.0.2 (.NET); the tests in `tests/Unit/SecureHashTest.php` and
+`AmwalPay.Ecr` (.NET), including the settlement and check-reachability calls added after 1.0.2; the tests in `tests/Unit/SecureHashTest.php` and
 `tests/Unit/WebServiceSecureHashTest.php` pin it byte for byte with that SDK's known answers. You
 need this page only to debug a terminal or the Hub, or to build a request yourself.
 
-## Wi-Fi/LAN
+## Wi-Fi and USB cable
 
 ### Framing
 
-One TCP connection carries one request and one answer: connect, send, wait, read, close.
+Wi-Fi: one TCP connection carries one request and one answer: connect, send, wait, read, close.
+USB cable: the same frames on the COM port (115200 baud, 8N1, DTR and RTS on, no handshake). The port
+is opened for one exchange; bytes left over from an earlier exchange are discarded before the write,
+and a frame whose `nonce` is not this request's is skipped.
 
 ```
 +--------+--------+------------------------------+
@@ -27,18 +30,18 @@ One TCP connection carries one request and one answer: connect, send, wait, read
 Fields that do not apply are **left out**, never sent empty: the terminal reads a field's presence as
 meaning the operation uses it.
 
-| Field | Sale | Void | Refund | Inquiry | Receipt | Close receipt |
-|---|---|---|---|---|---|---|
-| `version` (number `1`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `messageType` | `SALE` | `VOID` | `REFUND` | `INQUIRY` | `RECEIPT` | `CLOSE_RECEIPT` |
-| `merchantReference` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `terminalSerial`, `currencyCode`, `transactionDateTime` (`yyyyMMddHHmmss`), `ecrId` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `amount` (12 digits, minor units) | ✓ | | ✓ | | | |
-| `stan` (6 digits) | | ✓ | ✓ | by receipt | ✓ | |
-| `originalTerminalId` | | when given | when given | when given | when given | |
-| `originalTransactionDate` (`yyyyMMdd`) | | | ✓ | when given | when given | |
-| `originalMerchantReference` | | | | by reference | | |
-| `nonce`, `secureHash` | when signed | when signed | when signed | when signed | when signed | when signed |
+| Field | Sale | Void | Refund | Inquiry | Receipt | Close receipt | Settlement |
+|---|---|---|---|---|---|---|---|
+| `version` (number `1`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `messageType` | `SALE` | `VOID` | `REFUND` | `INQUIRY` | `RECEIPT` | `CLOSE_RECEIPT` | `SETTLEMENT` |
+| `merchantReference` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `terminalSerial`, `currencyCode`, `transactionDateTime` (`yyyyMMddHHmmss`), `ecrId` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `amount` (12 digits, minor units) | ✓ | | ✓ | | | | |
+| `stan` (6 digits) | | ✓ | ✓ | by receipt | ✓ | | |
+| `originalTerminalId` | | when given | when given | when given | when given | | |
+| `originalTransactionDate` (`yyyyMMdd`) | | | ✓ | when given | when given | | |
+| `originalMerchantReference` | | | | by reference | | | |
+| `nonce`, `secureHash` | when signed | when signed | when signed | when signed | when signed | when signed | when signed |
 
 Example, unsigned, field order as sent:
 
@@ -79,7 +82,23 @@ The reader is strict: invalid UTF-8, a byte-order mark, a repeated key anywhere,
 comments, single quotes, a bare value or array, nesting deeper than 64: all are malformed. Numbers
 keep their written text (`961.10` stays `961.10`) so signatures verify.
 
-An answer that declares `version` greater than 1 is not read (malformed, outcome unknown).
+Answers are read whatever `version` they declare, as the Windows SDK reads them.
+
+### Settlement answer
+
+The same envelope; `data.settlementStatus` decides the result:
+
+```json
+{"success":true,"responseCode":"00","message":"Settlement successful","data":{"settlementStatus":"SETTLED","batchId":"00000007","currency":"OMR","startTime":"20261020080000","endTime":"20261020130509","totalTransactions":4,"netAmount":"000000012500","totals":{"SALE":{"count":3,"amount":"000000014750"},"REFUND":{"count":1,"amount":"000000002250"}}}}
+```
+
+| `success` | `settlementStatus` | Result |
+|---|---|---|
+| true | `SETTLED` | `Settled`; amounts are minor units on the wire, major units on the result; missing `totals` rows read as zero |
+| true | `NO_TRANSACTIONS` | `NothingToSettle` |
+| anything else | e.g. `MISMATCH` (with `uploadedTransactions`), or absent (busy, not idle, firmware without `SETTLEMENT`) | `NotSettled` |
+
+The same reader is used for the Hub's `/Ecr/settle` answer.
 
 ## Web Service (Amwal Hub)
 
@@ -95,6 +114,8 @@ Hub of the configured environment (SIT, UAT, PROD; addresses resolved inside the
 | Refund | `/Ecr/Refund` |
 | Inquiry (by receipt or by reference) | `/Ecr/Inquiry` |
 | Close receipt | `/Ecr/closeReceipt` |
+| Settlement | `/Ecr/settle` |
+| Check reachability | `/Ecr/CheckReachability` |
 
 No e-receipt endpoint exists. TLS certificates and host names are always verified.
 
@@ -112,6 +133,13 @@ Common fields, in this order: `version` (number), `messageType`, `merchantId` (n
 | Inquiry by receipt | `stan`, `originalTransactionDate`, `originalMerchantReference: ""`, `originalTerminalId` |
 | Inquiry by reference | `stan: ""`, `originalTransactionDate`, `originalMerchantReference`, `originalTerminalId` |
 | Close receipt | no `messageType`, no `currencyCode`; `originalMerchantReference` = the sale, void or refund being dismissed |
+| Settlement, check reachability | no `messageType`, nothing extra: `version`, `merchantId`, `terminalId`, `terminalSerial`, `ecrId`, `merchantReference`, `currencyCode`, `transactionDateTime`, `requestDateTime` |
+
+Example, settle, unsigned:
+
+```json
+{"version":1,"merchantId":13593,"terminalId":126706,"terminalSerial":"P653200101973","ecrId":"ECR01","merchantReference":"SET01","currencyCode":"512","transactionDateTime":"20261026120005","requestDateTime":"20261026120005"}
+```
 
 Signed with `secureHashValue`: the same composition as Wi-Fi, excluding `secureHashValue`, under the
 **Web Service** key. Known answer: the sale for merchant `8899`, terminal `999`, serial `QQW`,
@@ -136,11 +164,15 @@ The SDK turns every failure into an envelope so it is read one way:
 | HTTP 4xx with nothing readable | status, reason phrase, no `nextStep` | `Declined` |
 | Hub answers `nextStep: INQUIRE_BY_MERCHANT_REFERENCE` | as sent | `Failed` (`Timeout` when `NO_RESPONSE` or "timeout") |
 
-For an inquiry, an envelope with `nextStep` and no `data` is `InquiryFailed`, never `NotFound`.
+For an inquiry, an envelope with `nextStep` and no `data` is `InquiryFailed`, never `NotFound`; for a
+settlement it is `SettlementFailed` (`ConnectionLost`), never `NotSettled`. For a reachability check,
+anything but a success envelope is `reachable: false`, with the message as `error`.
 
 ## Timeouts
 
 | | Connect | Answer | Total |
 |---|---|---|---|
 | Wi-Fi | 10 s | 120 s (+ one more for the automatic inquiry after a lost answer) | |
+| USB cable | (port open) | 120 s (+ one more for the automatic inquiry) | |
 | Web Service | 10 s | 130 s | 140 s (one HTTP deadline) |
+| Web Service check reachability | | | 3 s (`probeTimeout`) |

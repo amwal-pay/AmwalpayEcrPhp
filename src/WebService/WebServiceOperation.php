@@ -14,6 +14,8 @@ enum WebServiceOperation: string
     case Refund = '/Ecr/Refund';
     case TransactionStatus = '/Ecr/Inquiry';
     case CloseReceipt = '/Ecr/closeReceipt';
+    case Settle = '/Ecr/settle';
+    case CheckReachability = '/Ecr/CheckReachability';
 
     public function path(): string
     {
@@ -28,6 +30,8 @@ enum WebServiceOperation: string
             self::Refund => 'Refund',
             self::TransactionStatus => 'Transaction status',
             self::CloseReceipt => 'Close receipt',
+            self::Settle => 'Settlement',
+            self::CheckReachability => 'Check reachability',
         };
     }
 
@@ -41,6 +45,7 @@ enum WebServiceOperation: string
             EcrTransactionType::Inquiry => self::TransactionStatus,
             EcrTransactionType::CloseReceipt => self::CloseReceipt,
             EcrTransactionType::Receipt => null,
+            EcrTransactionType::Settlement => self::Settle,
         };
     }
 }
