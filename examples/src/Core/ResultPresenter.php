@@ -10,10 +10,15 @@ use AmwalPay\Ecr\Json\Json;
 use AmwalPay\Ecr\Result\Approved;
 use AmwalPay\Ecr\Result\Declined;
 use AmwalPay\Ecr\Result\EcrResult;
+use AmwalPay\Ecr\Result\EcrSettlement;
 use AmwalPay\Ecr\Result\Failed;
 use AmwalPay\Ecr\Result\Found;
 use AmwalPay\Ecr\Result\InquiryFailed;
 use AmwalPay\Ecr\Result\NotFound;
+use AmwalPay\Ecr\Result\NothingToSettle;
+use AmwalPay\Ecr\Result\NotSettled;
+use AmwalPay\Ecr\Result\Settled;
+use AmwalPay\Ecr\Result\SettlementFailed;
 
 /**
  * How a transaction ended: the outcome at a glance, the fields that matter to a
@@ -39,6 +44,7 @@ final class ResultPresenter
             $state instanceof StateCompleted => self::forResult($state->result, $state->type),
             $state instanceof StateInquired => self::forInquiry($state, !$usesWebService, $usesWebService),
             $state instanceof StateFailed => self::forFailure($state),
+            $state instanceof StateSettled => self::forSettlement($state->settlement),
             default => null,
         };
     }
@@ -139,6 +145,83 @@ final class ResultPresenter
             offersReceipt: $receiptSupported,
             receiptNote: $receiptSupported ? null : "The e-receipt QR is available over Wi\u{2011}Fi.",
         );
+    }
+
+    /** @return array<string, mixed> */
+    public static function forSettlement(EcrSettlement $settlement): array
+    {
+        return match (true) {
+            $settlement instanceof Settled => self::model(
+                headline: 'Settled',
+                tone: 'approved',
+                amount: $settlement->netAmount,
+                fields: self::settlementFields($settlement),
+                rawPayload: self::pretty($settlement->raw),
+            ),
+            $settlement instanceof NothingToSettle => self::model(
+                headline: 'Nothing to settle',
+                tone: 'approved',
+                message: $settlement->message,
+                rawPayload: self::pretty($settlement->raw),
+            ),
+            $settlement instanceof NotSettled => self::model(
+                headline: 'Not settled',
+                tone: 'declined',
+                message: $settlement->reason,
+                fields: self::notSettledFields($settlement),
+                rawPayload: $settlement->raw !== '' ? self::pretty($settlement->raw) : null,
+            ),
+            $settlement instanceof SettlementFailed => self::model(
+                headline: 'Settlement failed',
+                tone: 'declined',
+                message: $settlement->failure->message,
+            ),
+            default => self::model(headline: 'Settlement', tone: 'declined'),
+        };
+    }
+
+    /** @return list<array{label: string, value: string}> */
+    private static function settlementFields(Settled $settled): array
+    {
+        $fields = [];
+        if ($settled->batchId !== '') {
+            $fields[] = ['label' => 'Batch', 'value' => $settled->batchId];
+        }
+        $fields[] = ['label' => 'Transactions', 'value' => (string) $settled->totalTransactions];
+        $labels = ['SALE' => 'Sale', 'REFUND' => 'Refund', 'VOID' => 'Void', 'PRE_AUTH' => 'Pre-auth', 'CAPTURE' => 'Capture'];
+        foreach ($labels as $type => $label) {
+            if (isset($settled->totals[$type])) {
+                $fields[] = ['label' => $label, 'value' => $settled->totals[$type]->count . ' · ' . $settled->totals[$type]->amount];
+            }
+        }
+        $closed = self::settlementTime($settled->endTime);
+        if ($closed !== '') {
+            $fields[] = ['label' => 'Closed', 'value' => $closed];
+        }
+        return $fields;
+    }
+
+    /** @return list<array{label: string, value: string}> */
+    private static function notSettledFields(NotSettled $open): array
+    {
+        $fields = [];
+        if ($open->status !== '') {
+            $fields[] = ['label' => 'Status', 'value' => $open->status];
+        }
+        if ($open->responseCode !== '') {
+            $fields[] = ['label' => 'Response code', 'value' => $open->responseCode];
+        }
+        if ($open->uploadedTransactions !== null) {
+            $fields[] = ['label' => 'Uploaded', 'value' => (string) $open->uploadedTransactions];
+        }
+        return $fields;
+    }
+
+    /** The terminal stamps a settlement as `yyyyMMddHHmmss`. */
+    private static function settlementTime(string $value): string
+    {
+        $parsed = \DateTimeImmutable::createFromFormat('!YmdHis', $value);
+        return $parsed !== false && $parsed->format('YmdHis') === $value ? $parsed->format('d M Y H:i:s') : $value;
     }
 
     /**

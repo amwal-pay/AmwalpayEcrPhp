@@ -102,7 +102,12 @@ final class SerialEcrChannel implements EcrChannel
                 // so this must not read as a lost answer.
                 throw new EcrIOException($this->portName . ' stopped answering before the request was sent');
             }
-            $line->write($packet);
+            try {
+                $line->write($packet);
+            } catch (EcrIOException $e) {
+                // Bytes may have left: an unknown outcome, never "nothing was sent".
+                throw new EcrIOException('The terminal closed the connection while taking the request: ' . $e->getMessage(), 0, $e);
+            }
             return self::readFrame($line, $timeout, self::nonceOf($body));
         } finally {
             $line->close();

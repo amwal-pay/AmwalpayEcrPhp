@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AmwalExample\Core;
 
+use AmwalPay\Ecr\Serial\SerialPorts;
+
 /**
  * A registered POS terminal. The serial number is the unique identifier: the
  * transaction screen stores only the serial and looks connection details up
@@ -12,6 +14,11 @@ namespace AmwalExample\Core;
  */
 final class Terminal
 {
+    /**
+     * @param string $comPort USB cable identity: the device serial when the system reported one,
+     *        otherwise the COM name last chosen. Empty for every other mode. The COM number itself
+     *        is assigned by Plug and Play and is resolved again when a sale starts.
+     */
     public function __construct(
         public readonly string $serialNumber = '',
         public readonly string $name = '',
@@ -20,7 +27,13 @@ final class Terminal
         public readonly int $port = 0,
         public readonly string $terminalId = '',
         public readonly string $merchantId = '',
+        public readonly string $comPort = '',
     ) {
+    }
+
+    public function withComPort(string $comPort): self
+    {
+        return new self($this->serialNumber, $this->name, $this->ecrMode, $this->ipAddress, $this->port, $this->terminalId, $this->merchantId, $comPort);
     }
 
     public function mode(): EcrMode
@@ -55,7 +68,16 @@ final class Terminal
             case EcrMode::Bluetooth:
                 return 'Bluetooth';
             case EcrMode::UsbCable:
-                return 'USB cable';
+                // The COM number is assigned by the system and can change. Show the
+                // port it has now, and the device serial the till is following.
+                if ($this->comPort === '') {
+                    return 'USB cable';
+                }
+                $live = SerialPorts::portFor($this->comPort)->port;
+                if ($live === '') {
+                    return $this->comPort;
+                }
+                return strcasecmp($live, $this->comPort) === 0 ? $live : $live . ' · ' . $this->comPort;
             default:
                 if ($this->ipAddress !== '' && $this->port > 0) {
                     return $this->ipAddress . ':' . $this->port;
@@ -75,6 +97,7 @@ final class Terminal
             'port' => $this->port,
             'terminalId' => $this->terminalId,
             'merchantId' => $this->merchantId,
+            'comPort' => $this->comPort,
         ];
     }
 
@@ -90,6 +113,7 @@ final class Terminal
             (int) ($data['port'] ?? 0),
             $text('terminalId'),
             $text('merchantId'),
+            $text('comPort'),
         );
     }
 }

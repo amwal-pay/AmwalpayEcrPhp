@@ -8,10 +8,11 @@ use AmwalPay\Ecr\EcrTransactionType;
 use AmwalPay\Ecr\Result\EcrInquiry;
 use AmwalPay\Ecr\Result\EcrReceipt;
 use AmwalPay\Ecr\Result\EcrResult;
+use AmwalPay\Ecr\Result\EcrSettlement;
 
 /**
  * What the transaction screen is showing: Idle, Checking, InProgress,
- * Completed, Inquired or Failed. The classes are below; PHP has no nested types.
+ * Completed, Inquired, Failed or Settled. The classes are below; PHP has no nested types.
  */
 abstract class TransactionState
 {
@@ -23,10 +24,10 @@ abstract class TransactionState
     /** A state the operator has to acknowledge before doing anything else. */
     public function isResult(): bool
     {
-        return $this instanceof StateCompleted || $this instanceof StateInquired || $this instanceof StateFailed;
+        return $this instanceof StateCompleted || $this instanceof StateInquired || $this instanceof StateFailed || $this instanceof StateSettled;
     }
 
-    /** `idle`, `checking`, `inProgress`, `completed`, `inquired` or `failed`. */
+    /** `idle`, `checking`, `inProgress`, `completed`, `inquired`, `failed` or `settled`. */
     abstract public function name(): string;
 }
 
@@ -115,5 +116,18 @@ final class StateFailed extends TransactionState
     public function name(): string
     {
         return 'failed';
+    }
+}
+
+/** A settlement was answered. An exchange that never completed is StateFailed, so the cashier can try again. */
+final class StateSettled extends TransactionState
+{
+    public function __construct(public readonly EcrSettlement $settlement)
+    {
+    }
+
+    public function name(): string
+    {
+        return 'settled';
     }
 }

@@ -28,6 +28,13 @@ final class SessionsAndConfigTest extends TestCase
 
     // ── EcrConfig ─────────────────────────────────────────────────────
 
+    public function testAKeyPastedWithANonBreakingSpaceIsTrimmedAsDotNetTrims(): void
+    {
+        $plan = EcrSessions::plan(new \AmwalPay\Ecr\Link\LanLink('192.168.1.50'), new EcrConfig(), "\u{00A0}" . str_repeat('a', 32) . "\u{00A0}");
+
+        self::assertTrue($plan->isReady());
+    }
+
     public function testDefaultsDescribeAnOmaniDeploymentOnTheStandardPort(): void
     {
         $config = new EcrConfig();

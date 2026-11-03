@@ -90,6 +90,8 @@ There is no IP address. The terminal profile is USB cable, and the signing key i
 Windows shows the cable as a COM port, "MediaTek USB VCOM (Android)", at 115200 baud, 8 data bits, no
 parity, 1 stop bit. The bytes are the same framed messages as Wi-Fi.
 
+You need a driver installed on the system for the cable to work. Amwal provides it.
+
 The COM number can change the next time the cable is plugged in. Store `SerialPortChoice::selection()`
 (the USB serial when the device has one) and open `SerialPorts::portFor()->port` for the sale.
 `SerialPorts::list()` returns only the devices plugged in on that call. A COM port remembered from an
@@ -128,6 +130,11 @@ On Windows the port is driven through PHP's FFI extension, because PHP's own str
 deadline on a COM read: set `extension=ffi` and `ffi.enable=true` in php.ini. Without it the sale
 fails with `Failure\Unreachable` and nothing is sent. Linux (`/dev/ttyACM0`) and macOS
 (`/dev/cu.usbmodem…`) need only `stty`.
+
+A terminal that speaks Android Open Accessory can use `UsbAccessoryEcrChannel` instead, with no COM
+port: `new UsbCableLink()` and `usbChannel: fn () => new UsbAccessoryEcrChannel()`. See the
+[integration guide](docs/integration-guide.md#6-usb-cable-open-a-session). It has not yet been run
+against a real terminal.
 
 ## Operations
 

@@ -101,9 +101,45 @@ final class WebServiceTest extends TestCase
         self::assertSame($body->toJson(), $http->posts[0]['body']);
         self::assertSame('application/json; charset=utf-8', $http->posts[0]['headers']['Content-Type']);
         self::assertSame('application/json', $http->posts[0]['headers']['Accept']);
-        self::assertSame(10.0, $http->posts[0]['connect']);
+        self::assertSame(160.0, $http->posts[0]['connect']);
         self::assertSame(160.0, $http->posts[0]['total'], 'the client deadline is connect + answer');
         self::assertStringStartsWith('{', $http->posts[0]['body'], 'no byte order mark');
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function answersThatAreStillText(): iterable
+    {
+        $body = '{"success":true,"responseCode":"00","message":"Approved","data":{"merchantReference":"R1","amount":"1.000","authCode":"123456","cardHolderName":"%s"}}';
+        yield 'an invalid byte' => [sprintf($body, "JOS\xC9")];
+        yield 'a byte order mark' => ["\xEF\xBB\xBF" . sprintf($body, 'JOSE')];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('answersThatAreStillText')]
+    public function testAnApprovedAnswerIsNotLostToAStrayByteOrAByteOrderMark(string $answer): void
+    {
+        $result = $this->terminal(FakeHttpTransport::reply(200, $answer))->sale('1.000', 'R1');
+
+        self::assertInstanceOf(\AmwalPay\Ecr\Result\Approved::class, $result);
+    }
+
+    public function testOneDeadlineCoversConnectAndAnswer(): void
+    {
+        $http = FakeHttpTransport::reply(200, '{"success":true,"responseCode":"00"}');
+        $config = TestKeys::webService($this->stateDir(), connectTimeout: 10, responseTimeout: 130);
+
+        (new WebServiceApi($config, EcrLogger::none(), $http))->postJson(WebServiceOperation::Sale, WebServiceRequests::sale(1, 2, 'S', 1, 'R'));
+
+        self::assertSame(140.0, $http->posts[0]['connect'], 'a slow TLS handshake must not fail at 10 s and report 2m 20s');
+        self::assertSame(140.0, $http->posts[0]['total']);
+    }
+
+    public function testInquiryIsAnotherNameForTransactionStatus(): void
+    {
+        $when = '2026-11-02T10:00:00';
+        self::assertSame(
+            \AmwalPay\Ecr\Json\Json::write(WebServiceRequests::transactionStatus(1, 2, 'S', '000024', '20261102', 'R', transactionDateTime: $when)),
+            \AmwalPay\Ecr\Json\Json::write(WebServiceRequests::inquiry(1, 2, 'S', '000024', '20261102', 'R', transactionDateTime: $when)),
+        );
     }
 
     public function testAnHttpErrorCarryingAnEnvelopeIsThatEnvelope(): void

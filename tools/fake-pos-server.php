@@ -82,6 +82,7 @@ final class FakeTerminal
     /** @var array<string, true> */
     private array $seenNonces = [];
     private int $nextStan = 24;
+    private int $batch = 6;
 
     public function __construct(
         private string $key,
@@ -176,6 +177,8 @@ final class FakeTerminal
             $response = $this->noCloseReceipt
                 ? self::envelope(false, '96', 'Unsupported', null, ['CLOSE_RECEIPT not supported'])
                 : self::envelope(true, '00', 'OK', ['merchantReference' => $request['merchantReference'] ?? '']);
+        } elseif ($type === 'SETTLEMENT') {
+            $response = $this->settlement($request);
         } else {
             if ($this->busy && $type === 'SALE') {
                 $response = self::envelope(false, 'BUSY', 'Terminal is busy with another transaction', null, ['Terminal busy']);
@@ -271,6 +274,49 @@ final class FakeTerminal
             'cardMask' => '483312******1234',
             'terminalSerial' => (string) ($request['terminalSerial'] ?? ''),
             'transactionType' => ucfirst(strtolower($type)),
+        ]);
+    }
+
+    /**
+     * Closes the batch: what was taken since the last close, then nothing the next
+     * time, which is what makes a settlement safe to repeat after a lost answer.
+     *
+     * @param array<string, mixed> $request
+     * @return array<string, mixed>
+     */
+    private function settlement(array $request): array
+    {
+        $reference = (string) ($request['merchantReference'] ?? '');
+        $totals = [];
+        $count = 0;
+        $net = 0;
+        foreach ($this->byReference as $key => $transaction) {
+            if (!empty($transaction['settled'])) {
+                continue;
+            }
+            $this->byReference[$key]['settled'] = true;
+            $type = strtoupper((string) $transaction['type']);
+            $minor = (int) round((float) $transaction['authorized'] * 1000);
+            $totals[$type] ??= ['count' => 0, 'amount' => 0];
+            $totals[$type]['count']++;
+            $totals[$type]['amount'] += $minor;
+            $count++;
+            $net += $type === 'SALE' ? $minor : -$minor;
+        }
+        if ($count === 0) {
+            return self::envelope(true, '00', 'No transactions to settle', ['merchantReference' => $reference, 'settlementStatus' => 'NO_TRANSACTIONS']);
+        }
+        $now = date('YmdHis');
+        return self::envelope(true, '00', 'Settlement successful', [
+            'merchantReference' => $reference,
+            'settlementStatus' => 'SETTLED',
+            'batchId' => sprintf('%08d', ++$this->batch),
+            'currency' => 'OMR',
+            'startTime' => $now,
+            'endTime' => $now,
+            'totalTransactions' => $count,
+            'netAmount' => sprintf('%012d', max(0, $net)),
+            'totals' => array_map(static fn (array $row): array => ['count' => $row['count'], 'amount' => sprintf('%012d', $row['amount'])], $totals),
         ]);
     }
 

@@ -11,7 +11,7 @@ forced a different shape. The rules themselves are the samples' own; read their
 ```mermaid
 flowchart LR
   B["Browser<br/>the web sample's page, unchanged"] -->|"JSON over HTTP"| F["FrontController<br/>hosts, headers, Origin, JSON-only, 64 KB"]
-  F --> A["Api<br/>21 routes"]
+  F --> A["Api<br/>24 routes"]
   A -->|"start, find, cancel, inquire,<br/>receipt, close receipt, acknowledge"| R["TransactionRegistry<br/>runs as files, one running per serial"]
   A -->|"terminals, settings, log"| C["Core stores<br/>TerminalRepository, EcrExampleSettings, LogBuffer"]
   R -->|"detached PHP CLI worker"| E["Core TransactionEngine"]
@@ -68,6 +68,14 @@ page polls `GET /api/transactions/{id}` every 500 ms.
 
 State model, polling contract and the meaning of every field are exactly those of the web sample's
 guide (sections 4 and 5).
+
+**Settlement** is a run like a sale: `POST /api/transactions/settlement` starts it in a worker, under the
+same one-run-per-terminal rule, and the page polls. An answered settlement is the `settled` state, whatever
+it says (settled, nothing to settle, not settled); an exchange that never completed is `failed` with no
+reference, because the remedy is to repeat the call. **Check reachability** is not a run: it answers in the
+request, bounded by `probeTimeout`, and touches no registry state. **USB cable** terminals store the device
+serial in `comPort`; `SelectedTerminalConfig` resolves the live COM port each time, and the engine saves the
+serial when it finds only a COM name stored.
 
 ## 3. Settings at rest
 

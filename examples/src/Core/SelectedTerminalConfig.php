@@ -8,8 +8,11 @@ use AmwalPay\Ecr\EcrConfig;
 use AmwalPay\Ecr\EcrEnvironment;
 use AmwalPay\Ecr\EcrSessionPlan;
 use AmwalPay\Ecr\EcrSessions;
+use AmwalPay\Ecr\Link\EcrLink;
 use AmwalPay\Ecr\Link\LanLink;
+use AmwalPay\Ecr\Link\UsbCableLink;
 use AmwalPay\Ecr\Link\WebServiceLink;
+use AmwalPay\Ecr\Serial\SerialPorts;
 
 /**
  * What the SDK plan makes of a registered terminal, before anyone pays.
@@ -36,6 +39,15 @@ final class SelectedTerminalConfig
         if (!$terminal->mode()->isSupportedInExample()) {
             $issues[] = $terminal->mode()->label() . ' is not supported in this sample';
         }
+        $cablePort = '';
+        if ($terminal->mode()->isUsbCable()) {
+            $cablePort = SerialPorts::portFor($terminal->comPort)->port;
+            if (trim($terminal->comPort) === '') {
+                $issues[] = 'Choose the USB device this cable uses';
+            } elseif ($cablePort === '') {
+                $issues[] = 'Plug in device ' . trim($terminal->comPort) . '. Windows assigns its COM port from that serial, and the number can change.';
+            }
+        }
         $trimmed = trim($secureHashKey);
         $config = new EcrConfig(
             secureHashKey: EcrConfig::isValidSecureHashKey($trimmed) ? $trimmed : '',
@@ -45,10 +57,7 @@ final class SelectedTerminalConfig
             port: self::portOrDefault($terminal->port),
             stateDirectory: $stateDirectory,
         );
-        $link = $terminal->mode() === EcrMode::WebService
-            ? new WebServiceLink($terminal->merchantId, $terminal->terminalId)
-            : new LanLink($terminal->ipAddress, $terminal->mode() === EcrMode::Wifi ? self::portOrDefault($terminal->port) : EcrConfig::DEFAULT_PORT);
-        $plan = EcrSessions::plan($link, $config, $trimmed);
+        $plan = EcrSessions::plan(self::toLink($terminal, $cablePort), $config, $trimmed);
         return new self($terminal, $plan, array_values(array_merge($plan->issues(), $issues)));
     }
 
@@ -112,9 +121,19 @@ final class SelectedTerminalConfig
     public function transportLabel(): string
     {
         return match (true) {
-            !$this->isSupported() => $this->mode()->label(),
             $this->usesWebService() => 'HTTPS Web Service (JSON HMAC)',
-            default => 'TCP Wi-Fi (sorted key=value HMAC)',
+            $this->usesLan() && $this->isSupported() => 'TCP Wi-Fi (sorted key=value HMAC)',
+            default => $this->mode()->label(),
+        };
+    }
+
+    private static function toLink(Terminal $terminal, string $cablePort): EcrLink
+    {
+        return match ($terminal->mode()) {
+            EcrMode::WebService => new WebServiceLink($terminal->merchantId, $terminal->terminalId),
+            EcrMode::UsbCable => new UsbCableLink($cablePort),
+            EcrMode::Wifi => new LanLink($terminal->ipAddress, self::portOrDefault($terminal->port)),
+            default => new LanLink($terminal->ipAddress, EcrConfig::DEFAULT_PORT),
         };
     }
 

@@ -39,6 +39,32 @@ final class SerialTest extends TestCase
 
     // ── Finding the port ──────────────────────────────────────────────
 
+    public function testAWriteThatFailsIsAnUnknownOutcomeNotNothingSent(): void
+    {
+        $line = new class implements \AmwalPay\Ecr\Serial\SerialLine {
+            public function write(string $bytes): void
+            {
+                throw new \AmwalPay\Ecr\Channel\EcrIOException('The terminal did not take the request on COM8');
+            }
+
+            public function read(int $maxBytes, float $timeout): string
+            {
+                return '';
+            }
+
+            public function close(): void
+            {
+            }
+        };
+        $channel = new SerialEcrChannel('COM8', static fn () => $line, static fn (): array => ['COM8']);
+        $plan = EcrSessions::plan(new \AmwalPay\Ecr\Link\UsbCableLink('COM8'), new \AmwalPay\Ecr\EcrConfig(secureHashKey: TestKeys::WIFI, stateDirectory: $this->stateDir(), autoInquireOnFailure: false));
+
+        $result = EcrSessions::open('TW1', $plan, usbChannel: static fn () => $channel)->sale('1.000', 'ORDER-1');
+
+        self::assertInstanceOf(\AmwalPay\Ecr\Result\Failed::class, $result);
+        self::assertInstanceOf(\AmwalPay\Ecr\Failure\ConnectionLost::class, $result->failure);
+    }
+
     public function testThePickerOrdersComPortsAndOffersTheAndroidVirtualPortFirst(): void
     {
         $ports = SerialPorts::present([

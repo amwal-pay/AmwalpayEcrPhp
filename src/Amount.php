@@ -98,7 +98,7 @@ final class Amount
         if ($minorUnits === '') {
             return '';
         }
-        if (preg_match('/^([+-]?)([0-9]+)$/', $minorUnits, $m) !== 1) {
+        if (preg_match('/^([+-]?)([0-9]+)$/D', $minorUnits, $m) !== 1) {
             return $minorUnits;
         }
         $negative = $m[1] === '-';

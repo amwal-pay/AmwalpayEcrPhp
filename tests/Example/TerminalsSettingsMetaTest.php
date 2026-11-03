@@ -96,7 +96,7 @@ final class TerminalsSettingsMetaTest extends WebExampleTestCase
     public function testTheConfigCardShowsThePlanBeforeAnyonePays(): void
     {
         $this->call('POST', '/api/terminals', ['name' => 'Hub', 'serialNumber' => 'WS-1', 'ecrMode' => 4, 'merchantId' => '10001', 'terminalId' => '20002']);
-        $this->call('POST', '/api/terminals', ['name' => 'Cable', 'serialNumber' => 'USB-1', 'ecrMode' => 1]);
+        $this->call('POST', '/api/terminals', ['name' => 'Cable', 'serialNumber' => 'USB-1', 'ecrMode' => 1, 'comPort' => 'NO-SUCH-CABLE']);
 
         $web = $this->call('GET', '/api/terminals/WS-1/config')['json'];
         self::assertSame('HTTPS Web Service (JSON HMAC)', $web['transportLabel']);
@@ -113,8 +113,11 @@ final class TerminalsSettingsMetaTest extends WebExampleTestCase
         self::assertStringContainsString('[Web Service] selected WS-1 (Web Service)', $this->log());
 
         $usb = $this->call('GET', '/api/terminals/USB-1/config')['json'];
-        self::assertFalse($usb['isSupported']);
-        self::assertContains('USB Cable is not supported in this sample', $usb['issues']);
+        self::assertTrue($usb['isSupported']);
+        self::assertTrue($usb['supportsSettlement']);
+        self::assertFalse($usb['isReady'], 'a cable that is not plugged in cannot start a sale');
+        self::assertContains('Plug in device NO-SUCH-CABLE. Windows assigns its COM port from that serial, and the number can change.', $usb['issues']);
+        self::assertSame('USB Cable', $usb['transportLabel']);
         self::assertSame(404, $this->call('GET', '/api/terminals/NOPE/config')['status']);
     }
 
@@ -136,7 +139,9 @@ final class TerminalsSettingsMetaTest extends WebExampleTestCase
         self::assertFalse($inquiry['layouts']['01']['originalDate']);
 
         self::assertSame([1, 2, 3, 4], array_column($meta['modes'], 'value'));
-        self::assertSame([false, true, false, true], array_column($meta['modes'], 'supported'));
+        self::assertSame([true, true, false, true], array_column($meta['modes'], 'supported'));
+        self::assertStringContainsString('virtual serial port', $meta['modes'][0]['note']);
+        self::assertSame('', $meta['modes'][0]['hint']);
         self::assertSame(['SIT', 'UAT', 'PROD'], $meta['environments']);
         self::assertSame(['min' => '0.010', 'max' => '100000.000', 'fractionDigits' => 3, 'maxDigits' => 9], $meta['amount']);
         self::assertSame(32, $meta['merchantReferenceMaxLength']);

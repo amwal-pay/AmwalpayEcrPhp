@@ -5,6 +5,43 @@ package uses semantic versioning. Pin an exact version and read the entry before
 
 ## 1.0.0-rc.1 (2026-10-25)
 
+### Added (2026-11-02): what the .NET repositories still had
+
+Brought level with `AmwalpayEcrWindows` at `789f6b9` and `AmwalpayEcrWindowsExample` at `c1065b5`.
+
+- **USB accessory channel**: `Channel\UsbAccessoryEcrChannel`, for a terminal that speaks Android Open
+  Accessory, over WinUSB on Windows and libusb on macOS and Linux, through PHP's FFI extension. Pass it
+  as `usbChannel` with `new UsbCableLink()`. The WinUSB driver must already be attached: use the driver
+  Amwal provides. .NET's automatic driver install is not ported ([parity](docs/parity.md), difference
+  10). The handshake and framing are tested over a scripted bus; **the native buses have not been run
+  against a real terminal**.
+- `WebServiceRequests::inquiry()`, the other name for `transactionStatus()`.
+- **Example till**:
+  - **Manual settlement** on every supported mode, with a confirmation (`POST /api/transactions/settlement`).
+  - **Check reachability** on Web Service (`POST /api/transactions/reachability`).
+  - **USB cable terminals** can be registered and run: a device picker (`GET /api/serial-ports`), the
+    device serial stored in `comPort`, and the COM port looked up again when a sale starts.
+    Affected: a saved USB terminal has no `comPort`. Action: edit it and choose the device.
+  - **Close receipt** on a settled result (Wi-Fi and USB).
+- `tools/fake-pos-server.php` answers `SETTLEMENT`.
+
+### Fixed (2026-11-02)
+
+Found by comparing the code line by line with the .NET SDK.
+
+- **Web Service: an approved answer containing an invalid byte or a byte order mark was reported as
+  `Failed`** ("not valid JSON"), though the money had moved. It is now read as .NET and the Wi-Fi path
+  read it: no byte order mark, an invalid byte becomes U+FFFD.
+- **Web Service: connecting no longer has its own limit.** `connectTimeout` also capped the TLS
+  handshake, so a 12 s handshake failed at 10 s with "Timed out after 2m 20s". One deadline now covers
+  connect and answer, as in .NET. Affected: a Hub that cannot be reached at all now takes the whole
+  deadline (140 s through `plan()`) to fail, not 10 s.
+- **USB cable: a write that fails is `ConnectionLost`, not `Unreachable`.** Bytes may have left, so it
+  is an unknown outcome with an inquiry, never "nothing was sent".
+- A key pasted with a non-breaking space is trimmed in `plan()`, as .NET `Trim()` does.
+- `formatDuration()` rounds a half to even, as `Math.Round`. Minor units with a trailing newline are not
+  read as a number. A Web Service inquiry by reference checks the IDs before the reference.
+
 ### Added (2026-10-27): what `AmwalPay.Ecr` (.NET) added after 1.0.2
 
 No existing method changed signature or was removed. Wire formats of the existing operations are
@@ -43,8 +80,7 @@ unchanged.
     serial and finds its COM port again after Windows renumbers it.
   - Windows uses PHP's FFI extension (`extension=ffi`, `ffi.enable=true` under a web server); Linux
     and macOS use `stty`. Without FFI on Windows a cable sale is `Unreachable` and nothing is sent.
-  - The USB accessory (AOA over WinUSB/libusb) channel of the .NET repository is not ported: see
-    [docs/parity.md](docs/parity.md), difference 10.
+  - The USB accessory (AOA over WinUSB/libusb) channel of the .NET repository followed on 2026-11-02.
 - `FinancialGuard::protected()` is public, so a non-financial wait can be shielded from PHP's time
   limit.
 
@@ -103,4 +139,4 @@ SIT evidence and release approval are complete (see [docs/release.md](docs/relea
 
 ### Not included
 
-- Bluetooth, and the USB accessory (AOA) channel: not offered by the Windows SDK's documented API either.
+- Bluetooth: not offered by the Windows SDK either.

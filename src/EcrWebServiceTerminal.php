@@ -140,11 +140,11 @@ final class EcrWebServiceTerminal
         if (Validate::isBlank($originalReference)) {
             throw new InvalidRequestException("An inquiry by reference needs the original's reference");
         }
-        $original = MerchantReference::resolve($originalReference);
         $ids = $this->backendIds();
         if ($ids === null) {
             return new InquiryFailed($merchantReference, new Malformed('merchantId and terminalId are required for Web Service ECR'));
         }
+        $original = MerchantReference::resolve($originalReference);
         [$reference, $body] = $this->build(
             EcrTransactionType::Inquiry,
             $ids,

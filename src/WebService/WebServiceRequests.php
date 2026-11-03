@@ -101,6 +101,25 @@ final class WebServiceRequests
     }
 
     /**
+     * Same as {@see self::transactionStatus()}, under the operation's other name.
+     */
+    public static function inquiry(
+        int $merchantId,
+        int $terminalId,
+        string $terminalSerial,
+        string $stan = '',
+        string $originalTransactionDate = '',
+        string $merchantReference = '',
+        string $currencyCode = '512',
+        string $ecrId = 'ECR01',
+        string $transactionDateTime = '',
+        string $originalMerchantReference = '',
+        #[\SensitiveParameter] string $secureHashKey = '',
+    ): JsonObject {
+        return self::transactionStatus($merchantId, $terminalId, $terminalSerial, $stan, $originalTransactionDate, $merchantReference, $currencyCode, $ecrId, $transactionDateTime, $originalMerchantReference, $secureHashKey);
+    }
+
+    /**
      * Inquiry. By receipt number when `$stan` is set; otherwise by
      * `$originalMerchantReference`.
      */

@@ -14,6 +14,11 @@ USB cable: the same frames on the COM port (115200 baud, 8N1, DTR and RTS on, no
 is opened for one exchange; bytes left over from an earlier exchange are discarded before the write,
 and a frame whose `nonce` is not this request's is skipped.
 
+USB accessory: the same frames on the bulk pipes of an Android Open Accessory interface. The till sends
+control requests 51 (get protocol), 52 (six identity strings: `AmwalPay`, `EcrBridge`, `ECR requests
+over the cable`, `1.0`, `https://amwal-pay.com`, `0000000000000001`) and 53 (start); the terminal comes
+back as vendor `18D1`, product `2D00`, `2D01`, `2D04` or `2D05`.
+
 ```
 +--------+--------+------------------------------+
 | len hi | len lo | len bytes of UTF-8 JSON      |

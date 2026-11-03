@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AmwalExample\Core;
 
+use AmwalPay\Ecr\Channel\EcrChannel;
+use AmwalPay\Ecr\Channel\SerialEcrChannel;
 use AmwalPay\Ecr\EcrOpenedSession;
 use AmwalPay\Ecr\EcrSessions;
 use AmwalPay\Ecr\EcrTransactionType;
@@ -14,6 +16,8 @@ use AmwalPay\Ecr\Result\EcrReceipt;
 use AmwalPay\Ecr\Result\Found;
 use AmwalPay\Ecr\Result\ReceiptClosed;
 use AmwalPay\Ecr\Result\ReceiptUnavailable;
+use AmwalPay\Ecr\Result\SettlementFailed;
+use AmwalPay\Ecr\Serial\SerialPorts;
 
 /**
  * Runs one operation against a registered terminal: resolve the config, open
@@ -43,7 +47,7 @@ final class TransactionEngine
     public function logSelectedConfig(SelectedTerminalConfig $config): void
     {
         $logger = $this->loggerFor($config);
-        $prefix = $config->usesWebService() ? '[Web Service]' : '[Wi-Fi]';
+        $prefix = $config->usesWebService() ? '[Web Service]' : ($config->plan->usesUsbCable() ? '[USB]' : '[Wi-Fi]');
         $logger->debug($prefix . ' selected ' . $config->terminal->serialNumber . ' (' . $config->modeLabel() . ')');
         $logger->debug($prefix . ' SDK connection: ' . $config->connectionSummary());
         foreach ($config->issues() as $issue) {
@@ -113,6 +117,12 @@ final class TransactionEngine
                 : $session->inquire($request->receiptNumber, $request->transactionDate, $request->originalTerminalId);
             return TransactionOutcomes::fromInquiry($inquiry, $request);
         }
+        if ($request->type === EcrTransactionType::Settlement) {
+            $settlement = $session->settlement($reference);
+            return $settlement instanceof SettlementFailed
+                ? new StateFailed($settlement->failure->message)
+                : new StateSettled($settlement);
+        }
         $result = match ($request->type) {
             EcrTransactionType::Sale => $session->sale((string) $request->amount, $reference),
             EcrTransactionType::Void => $session->void($request->receiptNumber, $request->originalTerminalId, $reference),
@@ -152,6 +162,39 @@ final class TransactionEngine
         } catch (\Throwable $e) {
             $this->loggerFor($active)->debug('[App] close receipt failed: ' . $e->getMessage());
             return 'Could not close the receipt: ' . $e->getMessage();
+        }
+    }
+
+    /**
+     * Web Service only: posts `/Ecr/CheckReachability` and says what to show. A
+     * sale does not call this. Never throws.
+     *
+     * @return array{reachable: bool, message: string}
+     */
+    public function checkWebServiceReachability(string $terminalSerial): array
+    {
+        $no = static fn (string $message): array => ['reachable' => false, 'message' => $message];
+        $registered = $this->repository->findBySerial($terminalSerial);
+        if ($registered === null) {
+            return $no('Terminal ' . $terminalSerial . ' is no longer registered');
+        }
+        if ($registered->mode() !== EcrMode::WebService) {
+            return $no('Check reachability is only available for Web Service');
+        }
+        $active = $this->resolveConfig($registered);
+        if (!$active->isReady()) {
+            return $no(implode("\n", $active->issues()));
+        }
+        try {
+            $reachability = $this->open($registered, $active)->checkReachability();
+            if ($reachability === null) {
+                return $no('Check reachability is only available for Web Service');
+            }
+            return $reachability->reachable
+                ? ['reachable' => true, 'message' => $reachability->endpoint . ' is reachable']
+                : $no(TransactionOutcomes::unreachableMessage($reachability->endpoint, $reachability->port, $reachability->error));
+        } catch (\Throwable $e) {
+            return $no($e->getMessage());
         }
     }
 
@@ -202,7 +245,46 @@ final class TransactionEngine
 
     private function open(Terminal $registered, SelectedTerminalConfig $active): EcrOpenedSession
     {
-        return EcrSessions::open($registered->serialNumber, $active->plan, $this->loggerFor($active));
+        return EcrSessions::open(
+            $registered->serialNumber,
+            $active->plan,
+            $this->loggerFor($active),
+            usbChannel: $active->plan->usesUsbCable() ? fn (): EcrChannel => $this->openCable($registered) : null,
+        );
+    }
+
+    /** The COM port to open, with the cable steps the serial port itself does not log. */
+    private function openCable(Terminal $registered): EcrChannel
+    {
+        $logger = $this->cableLogger();
+        $port = $this->cablePort($registered, $logger);
+        $logger->debug($port === ''
+            ? '[USB] no COM port to open. Plug the terminal in. Windows assigns the number from the USB serial.'
+            : '[USB] this sale opens ' . $port . ' at 115200 8N1');
+        return new LoggingCable(new SerialEcrChannel($port), $logger);
+    }
+
+    /**
+     * A remembered COM name is replaced with the USB serial of the device on that
+     * port, so the next sale follows the device when the system assigns a different number.
+     */
+    private function cablePort(Terminal $registered, EcrLogger $logger): string
+    {
+        $saved = trim($registered->comPort);
+        $open = SerialPorts::portFor($saved);
+        $logger->debug($open->port === ''
+            ? "[USB] saved cable '" . $saved . "' is not plugged in"
+            : "[USB] saved cable '" . $saved . "' is " . $open->port . ' right now');
+        if ($open->port !== '' && strcasecmp($open->remember, $saved) !== 0) {
+            $this->repository->save($registered->withComPort($open->remember), $registered->serialNumber);
+        }
+        return $open->port;
+    }
+
+    private function cableLogger(): EcrLogger
+    {
+        $log = $this->log;
+        return EcrLogger::from(static fn (string $message) => $log->append('Ecr', $message));
     }
 
     private function loggerFor(SelectedTerminalConfig $config): EcrLogger

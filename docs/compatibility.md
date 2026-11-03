@@ -41,6 +41,7 @@ disk, not a network share.
 | Web Service contract | POS-552 (WebIntegration), as implemented by `AmwalPay.Ecr`: `/Ecr/Sale`, `/Ecr/Void`, `/Ecr/Refund`, `/Ecr/Inquiry`, `/Ecr/closeReceipt`, `/Ecr/settle`, `/Ecr/CheckReachability`. |
 | Hub environments | SIT, UAT, PROD (addresses as in `AmwalPay.Ecr` 1.0.2/1.0.1; UAT changed in 1.0.1). |
 | Settlement | `SETTLEMENT` (Wi-Fi, USB) and `/Ecr/settle` (Web Service), read as the Windows SDK reads them (`settlementStatus` `SETTLED`, `NO_TRANSACTIONS`, other). Firmware without it answers `NotSettled`. |
+| USB accessory channel | **Not verified on a real terminal.** The handshake and framing are tested over a scripted bus. On Windows with PHP 8.2.12 + FFI, device listing and call marshalling were run against the machine's USB devices, with no terminal attached and no accessory request sent. The libusb bus has not been loaded. |
 | USB cable on Windows | **Verified** against a real COM port (open, 115200 8N1 set-up, read deadline, write, close) on the machine above with PHP 8.2.12 + FFI; not yet against a terminal. |
 
 ## Compatibility matrix for SIT

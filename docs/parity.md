@@ -1,9 +1,10 @@
 # Parity with the Windows SDK
 
 `amwalpay/ecr-php` 1.0.0-rc.1 is a port of `AmwalPay.Ecr` (.NET,
-<https://github.com/amwal-pay/AmwalpayEcrWindows>): release 1.0.2 plus what the repository added
-after it on 2026-10-26: USB cable over the serial COM port, settlement (`SETTLEMENT` and
-`/Ecr/settle`) and the Web Service reachability check (`/Ecr/CheckReachability`). This page lists
+<https://github.com/amwal-pay/AmwalpayEcrWindows>) at repository commit `789f6b9` (2026-10-29), whose
+README names package 1.0.3: USB cable over the serial COM port and the USB accessory channel,
+settlement (`SETTLEMENT` and `/Ecr/settle`) and the Web Service reachability check
+(`/Ecr/CheckReachability`). The example till follows `AmwalpayEcrWindowsExample` at `c1065b5`. This page lists
 what is the same, how names map, and every deliberate difference, so POS-573 (cross-channel parity)
 can be checked line by line.
 
@@ -16,6 +17,11 @@ can be checked line by line.
   another nonce skipped; the COM port picker (`SerialPorts`): ordering, the Android VCOM preferred,
   the macOS twin hidden, a saved USB serial followed to its new COM number, labels as
   `COM8 · <Device Manager name> · device <serial>`.
+- USB accessory: the Android Open Accessory handshake and identity strings, the accessory ids, the
+  order interfaces are tried, the reconnect attempts, stale bytes discarded and other nonces skipped
+  (`UsbAccessoryEcrChannel`).
+- Web Service answers are read as `ReadAsStringAsync` reads them: no byte order mark, an invalid byte
+  becomes U+FFFD. One deadline covers connect and answer.
 - Web Service paths, body fields and order, `secureHashValue`, the environment-to-Hub mapping;
   settle and check-reachability share the identity body with no `messageType`.
 - Result mapping: unified and legacy envelopes, `errorList` before `message`, `nextStep`
@@ -65,6 +71,7 @@ port, terminal, recovery, session, config and channel cases.
 | `EcrSessionPlan.UsesUsbCable` | `usesUsbCable()` |
 | `EcrSessions.Open(serial, plan, usbChannel: () => ...)` | `EcrSessions::open($serial, $plan, usbChannel: fn () => ...)` |
 | `EcrSessions.UsbCableTerminal(...)` | `EcrSessions::usbCableTerminal(...)` |
+| `UsbAccessoryEcrChannel` | `Channel\UsbAccessoryEcrChannel` (buses in `Usb\`) |
 | `SerialEcrChannel`, `SerialPorts`, `SerialPortChoice`, `ConnectedPorts`, `SerialPortBinding` | `Channel\SerialEcrChannel`, `Serial\SerialPorts`, `Serial\SerialPortChoice`, `Serial\ConnectedPorts`, `Serial\SerialPortBinding` |
 | `IEcrChannel`, `EcrChannelTimeout` | `Channel\EcrChannel`, `Channel\EcrChannelTimeout` |
 | `EcrWebServiceRequestJson.*` (incl. `Settle`, `CheckReachability`) | `WebService\WebServiceRequests::*` (incl. `settle()`, `checkReachability()`) |
@@ -95,9 +102,14 @@ PHP itself, or is an opt-in that is off by default:
 | 7 | **The SDK raises `max_execution_time` and sets `ignore_user_abort`** during a payment or settlement wait. | On Windows the PHP time limit is wall-clock; a killed request is an unknown outcome. |
 | 8 | **No cancellation token; calls are synchronous.** | Not applicable to PHP. |
 | 9 | **`Failure\Invalid` still exists** but is no longer produced. | Results stored by earlier builds still read. |
-| 10 | **USB cable is the serial COM port only.** The .NET repository also carries a USB accessory (Android Open Accessory) channel over WinUSB/libusb with a driver installer; its README documents only the COM port, and the PHP SDK ports that. | The accessory channel needs native USB drivers that PHP cannot load. |
+| 10 | **The USB accessory channel does not install a driver.** `Channel\UsbAccessoryEcrChannel` is ported, over WinUSB and libusb through FFI, but .NET's `WinUsbDriverSetup` is not: it adds a self-signed certificate to the machine's trust stores and runs `pnputil` behind an elevation prompt. Install the driver Amwal provides. **The native buses have not been run against a real terminal**: see [compatibility](compatibility.md). | A PHP process, under a web server especially, has no desktop to show the prompt on, and a payment SDK should not change a machine's certificate trust on its own. |
 | 11 | **On Windows the COM port is driven through PHP's FFI extension** (`kernel32`), which must be enabled (`extension=ffi`, `ffi.enable=true` under a web server). Without it the cable reports `Unreachable` and sends nothing. Linux and macOS use `stty` on the open descriptor. | PHP's streams cannot put a deadline on a COM read; a payment wait without one could hang a till. |
-| 12 | **A cable error after the request is written is `ConnectionLost`** (outcome unknown, inquiry). A failure to open, set up or drain the port before the write is `Unreachable`. .NET reports some post-write port errors (e.g. "The port is closed.") as `Unreachable`, and a port that refuses access escapes as an exception. | After the write the terminal may have acted; never report that as "nothing was sent". |
+| 12 | **A cable error during or after the write is `ConnectionLost`** (outcome unknown, inquiry), on the COM port and the accessory channel. A failure to open, set up or drain the port before the write is `Unreachable`. .NET reports some of these (e.g. "The port is closed.") as `Unreachable`, a write timeout or a port that refuses access escapes as an exception, and a non-object frame escapes too (`Malformed` here). | Once bytes may have left, the terminal may have acted; never report that as "nothing was sent". |
 | 13 | **`usbChannel` is the last parameter of `EcrSessions::open()`** (after `logger`, `httpTransport`, `guard`); .NET has it third. Pass it by name in both. | Keeps existing PHP callers that pass `$logger` positionally working. |
 | 14 | **A cable terminal's guard key is `cable\|<port>\|0`**, a Wi-Fi one `wifi\|<host>\|<port>`. | Only used by the opt-in guard; .NET has no guard. |
-| 15 | **The Windows "port does not exist" / "access denied" message is chosen by whether Windows lists the port**, not by the Win32 error code. | PHP calls Windows between two FFI calls, so `GetLastError()` is not reliable. |
+| 15 | **The Windows "port does not exist" / "access denied" message is chosen by whether Windows lists the port**, not by the Win32 error code. Likewise the WinUSB pipe does not read "device gone" from the error code: the channel lists the bus once a second while it waits. | PHP calls Windows between two FFI calls, so `GetLastError()` is not reliable. |
+| 16 | **Web Service redirects are not followed.** .NET's `HttpClient` follows them (307/308 POST again). A Hub answering a redirect is `Failed` here, with an inquiry to resolve it. | A signed payment is not re-sent to an address nobody configured. Pass an `HttpTransport` to change this. |
+| 17 | **Proxy and certificates come from PHP, not Windows.** `HTTPS_PROXY` and `curl.cainfo` (or `caBundlePath`), not the WinHTTP proxy and the Windows certificate store. | cURL does not read them. See [troubleshooting](troubleshooting.md#web-service). |
+| 18 | **A non-UTF-8 `charset` on a Web Service answer is not converted**: bytes that are not UTF-8 become U+FFFD. cURL may also negotiate HTTP/2, where a status has no reason phrase, so a message can read `HTTP 502` for `Bad Gateway`. | The Hub answers in UTF-8; only the text of a field or message could differ. |
+| 19 | **Windows cable discovery reads the registry through `reg.exe`.** With `proc_open` disabled no port is listed, so a cable reads as not plugged in, where .NET's `GetPortNames()` still works. Likewise the machine's time zone is read through `tzutil`/PowerShell: with `shell_exec` disabled it falls back to `date.timezone`, so set `EcrConfig` `timezone` there. | PHP has no API for either. |
+| 20 | **Small things.** The stale-byte drain on the COM port always waits at least 50 ms (.NET only takes what is buffered). `SerialPorts::resolve($saved, null)` asks the machine. Emoji travel as raw UTF-8 and U+2028/9 as escapes in a request (same value and signature, different byte count). Linux port listing does not filter phantom `ttyS*`. An `authorizeAmount` outside what a `decimal` holds is shown as text. | PHP streams and types; none of these changes an outcome on a real terminal. |

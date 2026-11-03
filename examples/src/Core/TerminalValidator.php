@@ -21,6 +21,7 @@ final class TerminalValidator
         string $port,
         string $terminalId,
         string $merchantId,
+        string $comPort = '',
     ): array {
         $errors = [];
         if (trim($name) === '') {
@@ -53,6 +54,13 @@ final class TerminalValidator
                 $errors['merchantId'] = 'The merchant ID must be numeric';
             }
         }
+        if ($mode->isUsbCable()) {
+            if (trim($comPort) === '') {
+                $errors['comPort'] = 'Choose the USB device this cable uses';
+            } elseif (!self::isPortName($comPort)) {
+                $errors['comPort'] = 'Choose a USB device. Windows assigns its COM port from the device serial';
+            }
+        }
         return $errors;
     }
 
@@ -64,6 +72,7 @@ final class TerminalValidator
         string $port,
         string $terminalId,
         string $merchantId,
+        string $comPort = '',
     ): Terminal {
         return new Terminal(
             serialNumber: trim($serial),
@@ -73,6 +82,7 @@ final class TerminalValidator
             port: $mode->isIpBased() ? (self::isInt($port) ? (int) $port : (int) self::DEFAULT_PORT) : 0,
             terminalId: trim($terminalId),
             merchantId: trim($merchantId),
+            comPort: $mode->isUsbCable() ? trim($comPort) : '',
         );
     }
 
@@ -81,6 +91,12 @@ final class TerminalValidator
     {
         $v = trim($value);
         return preg_match('/^[0-9]{1,19}$/', $v) === 1 && filter_var(ltrim($v, '0') ?: '0', \FILTER_VALIDATE_INT) !== false;
+    }
+
+    private static function isPortName(string $value): bool
+    {
+        $text = trim($value);
+        return $text !== '' && \strlen($text) <= 260 && preg_match('/[\s"\']/', $text) !== 1;
     }
 
     private static function isInt(string $value): bool

@@ -471,7 +471,7 @@ final class EcrTerminal
     /** `45s`, `2m`, `1m 30s`. */
     public static function formatDuration(float $seconds): string
     {
-        $total = (int) round($seconds);
+        $total = (int) round($seconds, 0, \PHP_ROUND_HALF_EVEN);
         if ($total < 60) {
             return $total . 's';
         }

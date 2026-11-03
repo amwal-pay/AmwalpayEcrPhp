@@ -146,6 +146,8 @@ main { flex: 1; width: 100%; max-width: 640px; margin: 0 auto; padding: var(--gu
 .view > * + * { margin-top: 12px; }
 
 .row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.row > select { flex: 1; width: auto; min-width: 0; }
+.row > button { flex: none; }
 .row.spread { justify-content: space-between; flex-wrap: nowrap; }
 .terminals-heading { margin-top: 1.5rem; }
 
@@ -256,6 +258,8 @@ button.primary:hover:not(:disabled) { background: var(--brand-hover); }
 button.primary:active:not(:disabled) { background: var(--brand-pressed); }
 
 button.outlined { border-color: var(--outline); color: var(--brand-text); }
+#btn-settle, #btn-reach { width: 100%; margin-top: 8px; }
+#reach-status { margin-top: 8px; white-space: pre-line; }
 button.outlined:hover:not(:disabled), button.text:hover:not(:disabled) { background: color-mix(in srgb, var(--brand) 10%, transparent); }
 
 button.danger { color: var(--error); font-weight: 600; }

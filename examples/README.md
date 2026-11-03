@@ -2,9 +2,10 @@
 
 The PHP port of the Amwal ECR web sample
 ([AmwalpayEcrWindowsExample / AmwalECR-Web-Example](https://github.com/amwal-pay/AmwalpayEcrWindowsExample)):
-register POS terminals, key an amount in the browser, pick a terminal, run a sale, void, refund or
-inquiry over **Wi-Fi** or the **ECR Web Service**. The page is the web sample's page, file for file
-(plain HTML/CSS/ES modules, no build step, no CDN). Behind it, the same 21-route JSON API is written in
+register POS terminals, key an amount in the browser, pick a terminal, run a sale, void, refund, inquiry
+or settlement over **Wi-Fi**, **USB cable** or the **ECR Web Service**, and on Web Service check
+reachability. The page is the web sample's page, file for file
+(plain HTML/CSS/ES modules, no build step, no CDN). Behind it, the same 24-route JSON API is written in
 PHP, along with a PHP port of the samples' shared Core (terminal store, form rules, transaction
 engine, outcome classification, result wording), so behaviour and wording match the Windows samples.
 
@@ -68,13 +69,22 @@ port `19100`) → **Transaction** → amount → **Start transaction**. Useful f
 `--partial`, `--delay 8` (then **Cancel**, or reload the page), `--drop-sale`,
 `--drop-sale --drop-first-inquiry`, `--not-found`, `--busy`, `--no-close-receipt`.
 
+### USB cable
+
+Plug the terminal into the computer running PHP, with the driver Amwal provides installed. The worker
+drives the COM port through FFI: `extension=ffi` in the `php.ini` the example's PHP reads. Set the Wi-Fi
+key, **Add terminal** in mode USB Cable, press **Refresh** and choose the MediaTek USB VCOM device. The
+till stores the device serial and looks the COM port up again when a sale or settlement starts, because
+the number can change.
+
 ### Web Service
 
 Calls the Amwal Hub over HTTPS (`ecrMode: 4`), not a terminal IP. You need credentials from Amwal.
 Set the environment and the **Web Service** key (not the Wi-Fi key) on the Terminals screen, add a
 terminal in mode Web Service (serial, numeric merchant and terminal IDs), and select it on the
-Transaction screen; the config card must read ready before **Start**. There is no reachability probe
-and no e-receipt; keep the merchant reference so **Inquire by reference** can resolve a lost answer.
+Transaction screen; the config card must read ready before **Start**. **Check reachability** posts
+`/Ecr/CheckReachability` and does not start a sale. A sale does not probe first and there is no
+e-receipt; keep the merchant reference so **Inquire by reference** can resolve a lost answer.
 On Windows, PHP often needs a CA bundle for HTTPS: set `curl.cainfo` in php.ini (see
 [troubleshooting](../docs/troubleshooting.md#web-service)).
 
@@ -118,6 +128,9 @@ JSON in, JSON out. Mutating calls (`POST`, `PUT`, `DELETE`) **must** send
 | `POST /api/transactions/{id}/cancel` | Stop waiting |
 | `POST /api/transactions/{id}/inquire` | Look an unknown outcome up by its reference |
 | `POST /api/transactions/{id}/receipt` | Fetch the e-receipt of an inquiry result (Wi-Fi) |
+| `POST /api/transactions/settlement` | Close the current batch (`202`, same poll as a sale) |
+| `POST /api/transactions/reachability` | Web Service only: `{ reachable, message }`. Does not start a transaction |
+| `GET /api/serial-ports?serial=&saved=` | The USB devices plugged in now: `{ ports, selected }` |
 | `POST /api/transactions/{id}/close-receipt` | Ask the terminal to put its receipt away |
 | `DELETE /api/transactions/{id}` | The operator has read the result (`409` while running) |
 | `GET /api/qr?text=` | `image/svg+xml` |
@@ -181,8 +194,13 @@ security guard, and a dead worker turning into an unknown outcome with its refer
   (not this page) is what refuses the next sale on that terminal until it is reconciled.
 - Closing the result dialog acknowledges it, including an unknown outcome; the reference stays in the
   debug log and in the SDK journal.
-- USB cable and Bluetooth can be registered (to match the Android and Windows terminal lists) but not
-  run, as in the Windows sample. The SDK itself drives a USB cable (`UsbCableLink` with
-  `SerialEcrChannel`, see the [integration guide](../docs/integration-guide.md#6-usb-cable-open-a-session));
-  settlement and the Web Service reachability check are SDK calls this sample does not put on a button.
+- USB cable runs in the process that hosts the site, so the cable has to be plugged into that computer.
+  It uses the COM port, like the Windows sample; the SDK's `UsbAccessoryEcrChannel` is not offered here.
+  Bluetooth can be registered, to match the Android and Windows terminal lists, but not run.
+- A Web Service settlement result has no sale, void or refund reference, so **Close receipt** answers
+  `409` there.
+- Cancelling a settlement only stops the wait and returns to idle. The batch may still close; run the
+  settlement again to find out, which is safe.
+- USB cable and the Web Service buttons are not exercised against real hardware or a real Hub by the
+  tests, and no test drives the page in a browser.
 - Web Service is not exercised against a real Hub by the tests.

@@ -57,13 +57,24 @@ what was sent and received, with the key shown only as `configured`.
 | `NotSettled` with no status from an older terminal | The firmware does not know `SETTLEMENT`. Settle from the terminal's own menu. |
 | `SettlementFailed` | The answer was lost. The batch may or may not have closed. Settling again is safe: a closed batch answers `NothingToSettle`. |
 
+## USB accessory channel
+
+| Symptom | Cause and fix |
+|---|---|
+| `Unreachable` *needs PHP's FFI extension* | Add `extension=ffi` to php.ini, and `ffi.enable=true` under a web server. |
+| `Unreachable` *USB cable needs libusb* | macOS: `brew install libusb`. Linux: install the libusb 1.0 package. |
+| `Unreachable` *Could not open the terminal on the cable. Install the USB driver Amwal provides* | The WinUSB driver is not attached to the terminal. The SDK does not install one. |
+| `Unreachable` *This machine refused access to the USB device* | Linux: give the PHP user access with a udev rule. |
+| *A USB device is connected but it is not a terminal in accessory mode* | The terminal is not plugged in, or the POS app is not on USB cable mode. |
+| `ConnectionLost` *it left accessory mode* | The cable was pulled or the POS app left USB cable mode after the request went out. Outcome unknown: inquire by reference. |
+
 ## Web Service
 
 | Symptom | Cause and fix |
 |---|---|
 | `Failed` *SSL certificate problem: unable to get local issuer certificate* | PHP has no CA bundle. Download the Mozilla bundle (`cacert.pem` from curl.se), set `curl.cainfo` and `openssl.cafile` in php.ini, or pass `caBundlePath`. Never disable verification. |
 | `Failed` *Could not resolve host* / *Failed to connect* | Outbound HTTPS blocked: proxy, firewall or DNS. With a proxy, set `HTTPS_PROXY` for the PHP process or pass an `HttpTransport`. This is an unknown outcome: the request may have reached the Hub before the failure. |
-| `Failed` *Timed out after 2m 20s* | The Hub did not answer within 140 s. Reconcile by reference. If it happens before 140 s, something in front of PHP (IIS, Apache, proxy) has a shorter timeout. |
+| `Failed` *Timed out after 2m 20s* | The Hub did not connect and answer within 140 s. Reconcile by reference. If it happens before 140 s, something in front of PHP (IIS, Apache, proxy) has a shorter timeout. |
 | `Declined` *secureHashValue mismatch* / HTTP 401 | Wrong key: the Web Service key, not the Wi-Fi key. The Hub refused the request; nothing moved. |
 | `Declined` *RequestDateTimeIsRequired*, or "The request timestamp is outside the accepted window" | The till's clock or time zone disagrees with the terminal's. Check the machine's clock and time zone (Windows: Settings > Time & language). Leave `EcrConfig` `timezone` unset so the SDK uses the machine's local time, as the Windows SDK does. |
 | `NotFound` right after a lost sale | The Hub has no record yet, or the date filter excluded it: inquire by reference without a date. Not proof that nothing was charged. |

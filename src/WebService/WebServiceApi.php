@@ -7,6 +7,7 @@ namespace AmwalPay\Ecr\WebService;
 use AmwalPay\Ecr\EcrConfig;
 use AmwalPay\Ecr\EcrTerminal;
 use AmwalPay\Ecr\EcrWireResponse;
+use AmwalPay\Ecr\Internal\NetText;
 use AmwalPay\Ecr\Json\Json;
 use AmwalPay\Ecr\Json\JsonException;
 use AmwalPay\Ecr\Json\JsonObject;
@@ -69,7 +70,7 @@ final class WebServiceApi
                 $url,
                 $payload,
                 ['Content-Type' => 'application/json; charset=utf-8', 'Accept' => 'application/json'],
-                min($this->config->connectTimeout, $deadline),
+                $deadline,
                 $deadline,
             );
         } catch (HttpTransportException $e) {
@@ -81,11 +82,12 @@ final class WebServiceApi
         }
 
         $status = $response->status;
-        $text = $response->body;
+        $text = self::readText($response->body);
         $elapsed = self::elapsed($started);
-        WebServiceHttpLog::response($this->logger, $operation, $status, $elapsed, trim($text) === '' ? '<empty>' : $text);
+        $blank = NetText::trim($text) === '';
+        WebServiceHttpLog::response($this->logger, $operation, $status, $elapsed, $blank ? '<empty>' : $text);
 
-        if (trim($text) === '') {
+        if ($blank) {
             WebServiceHttpLog::error($this->logger, $operation, 'Empty response (' . $response->reasonPhrase . ')', $elapsed);
             return self::errorBody((string) $status, 'Empty response from Web Service (' . $response->reasonPhrase . ')');
         }
@@ -109,6 +111,16 @@ final class WebServiceApi
         }
 
         return $parsed;
+    }
+
+    /**
+     * The body as text, as `ReadAsStringAsync` reads it: no byte order mark, and an
+     * invalid byte becomes U+FFFD. One stray byte in a card holder's name must not
+     * turn an approved sale into a lost answer, as it does not on Wi-Fi either.
+     */
+    private static function readText(string $body): string
+    {
+        return NetText::scrubUtf8(str_starts_with($body, "\xEF\xBB\xBF") ? substr($body, 3) : $body);
     }
 
     private function logSigning(JsonObject $body): void

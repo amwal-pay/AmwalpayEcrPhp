@@ -10,6 +10,7 @@ use AmwalExample\Core\StateFailed;
 use AmwalExample\Core\StateIdle;
 use AmwalExample\Core\StateInProgress;
 use AmwalExample\Core\StateInquired;
+use AmwalExample\Core\StateSettled;
 use AmwalExample\Core\TransactionEngine;
 use AmwalExample\Core\TransactionOutcomes;
 use AmwalExample\Core\TransactionRequest;
@@ -49,11 +50,14 @@ final class TransactionRegistry
         \AmwalExample\Core\TransactionRequest::class,
         \AmwalExample\Core\StateIdle::class, \AmwalExample\Core\StateChecking::class, \AmwalExample\Core\StateInProgress::class,
         \AmwalExample\Core\StateCompleted::class, \AmwalExample\Core\StateInquired::class, \AmwalExample\Core\StateFailed::class,
+        \AmwalExample\Core\StateSettled::class,
         \AmwalPay\Ecr\EcrTransactionType::class, \AmwalPay\Ecr\Result\NextStep::class,
         \AmwalPay\Ecr\Result\Approved::class, \AmwalPay\Ecr\Result\Declined::class, \AmwalPay\Ecr\Result\Failed::class,
         \AmwalPay\Ecr\Result\Found::class, \AmwalPay\Ecr\Result\NotFound::class, \AmwalPay\Ecr\Result\InquiryFailed::class,
         \AmwalPay\Ecr\Result\EcrTransaction::class,
         \AmwalPay\Ecr\Result\ReceiptReady::class, \AmwalPay\Ecr\Result\ReceiptUnavailable::class, \AmwalPay\Ecr\Result\ReceiptFailed::class,
+        \AmwalPay\Ecr\Result\Settled::class, \AmwalPay\Ecr\Result\NothingToSettle::class, \AmwalPay\Ecr\Result\NotSettled::class,
+        \AmwalPay\Ecr\Result\EcrSettlementTotal::class,
         \AmwalPay\Ecr\Failure\Unreachable::class, \AmwalPay\Ecr\Failure\Timeout::class, \AmwalPay\Ecr\Failure\Malformed::class,
         \AmwalPay\Ecr\Failure\ConnectionLost::class, \AmwalPay\Ecr\Failure\Unauthenticated::class, \AmwalPay\Ecr\Failure\Busy::class,
         \AmwalPay\Ecr\Failure\Unresolved::class, \AmwalPay\Ecr\Failure\Invalid::class,
@@ -215,11 +219,11 @@ final class TransactionRegistry
                 return ['notFound'];
             }
             $state = $run['state'];
-            if (!$state instanceof StateCompleted) {
+            if (!$state instanceof StateCompleted && !$state instanceof StateSettled) {
                 return ['notApplicable', null];
             }
             $original = '';
-            if ($run['usesWebService'] && $state->type->movesMoney()) {
+            if ($state instanceof StateCompleted && $run['usesWebService'] && $state->type->movesMoney()) {
                 $original = $state->result->merchantReference;
             }
             if ($run['usesWebService'] && trim($original) === '') {
@@ -408,6 +412,10 @@ final class TransactionRegistry
             return $state instanceof StateChecking && $request->merchantReference === ''
                 ? new StateFailed($message . ' Nothing was sent to the terminal.')
                 : new StateFailed($message . ' If the request had already reached the terminal, it may still complete.', $request->merchantReference);
+        }
+        if ($request->type === EcrTransactionType::Settlement) {
+            // Safe to repeat: a batch that closed answers "nothing to settle" the next time.
+            return new StateFailed($message . ' The batch may or may not have closed; run the settlement again to find out.');
         }
         return new StateFailed($message, $request->looksUpByReference() ? $request->originalReference : null, 'An inquiry only reads and changes nothing, so it is safe to try again.');
     }

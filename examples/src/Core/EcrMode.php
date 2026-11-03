@@ -9,8 +9,8 @@ namespace AmwalExample\Core;
  * 1 USB cable, 2 Wi-Fi, 3 Bluetooth, 4 Web Service.
  *
  * All four stay registrable so a terminal list matches the Android and Windows
- * samples. Like the Windows sample, this one runs Wi-Fi and Web Service; the SDK
- * itself also drives a USB cable (`UsbCableLink` + `SerialEcrChannel`).
+ * samples. Like the Windows sample, this one runs Wi-Fi, USB cable and Web Service.
+ * Bluetooth is not a link the SDK can open.
  */
 enum EcrMode: int
 {
@@ -43,10 +43,15 @@ enum EcrMode: int
         return $this === self::Wifi;
     }
 
+    public function isUsbCable(): bool
+    {
+        return $this === self::UsbCable;
+    }
+
     /** Whether this sample can run transactions over the mode. */
     public function isSupportedInExample(): bool
     {
-        return $this === self::Wifi || $this === self::WebService;
+        return $this === self::Wifi || $this === self::WebService || $this === self::UsbCable;
     }
 
     public static function fromValue(int $value): ?self

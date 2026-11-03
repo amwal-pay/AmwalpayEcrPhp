@@ -146,6 +146,20 @@ final class TransactionOutcomes
         if ($error !== null && $error !== '') {
             $text .= "\n(" . $error . ')';
         }
+        if (stripos($endpoint, 'https://') === 0 || stripos($endpoint, 'http://') === 0) {
+            return $text . "\n\nCheck:\n"
+                . "• The terminal is online for Web Service ECR\n"
+                . "• Merchant id and terminal id match the terminal\n"
+                . '• This PC can reach the ECR host';
+        }
+        if ($endpoint === 'USB cable' || stripos($endpoint, 'COM') === 0 || str_starts_with($endpoint, '/dev/')) {
+            return $text . "\n\nCheck:\n"
+                . "• The terminal is plugged into this computer with a USB cable\n"
+                . "• The terminal's virtual serial port is turned on\n"
+                . "• Windows assigns the COM port from the terminal's USB serial. The number can change\n"
+                . "• The POS app is on USB cable mode and shows that USB serial\n"
+                . '• The serial number matches the terminal you selected';
+        }
         return $text . "\n\nCheck:\n"
             . "• POS app is in ECR mode (Wi\u{2011}Fi) and shows its IP under the card logos\n"
             . '• Registered IP matches that address (port ' . $port . ")\n"

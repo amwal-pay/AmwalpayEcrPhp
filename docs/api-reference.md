@@ -15,7 +15,8 @@ This page lists the public API of the Composer package `amwalpay/ecr-php` (names
 - [Exceptions](#exceptions): `Exception\*`
 - [Safety](#safety): `FinancialGuard`, `JournalEntry`, `TransactionJournal`, `FileTransactionJournal`, `TerminalLock`, `FileTerminalLock`
 - [Logging](#logging): `Log\*`
-- [Channel](#channel): `EcrChannel`, `TcpEcrChannel`, `SerialEcrChannel`, `EcrFrames`, `EcrIOException`, `EcrChannelTimeout`
+- [Channel](#channel): `EcrChannel`, `TcpEcrChannel`, `SerialEcrChannel`, `UsbAccessoryEcrChannel`, `EcrFrames`, `EcrIOException`, `EcrChannelTimeout`
+- [USB accessory](#usb-accessory): `UsbAccessoryBus`, `UsbPipe`, `UsbPlug`, `WinUsbAccessoryBus`, `LibUsbAccessoryBus`
 - [Serial (USB cable)](#serial-usb-cable): `SerialPorts`, `SerialPortChoice`, `ConnectedPorts`, `SerialPortBinding`, `SerialLine`, `SerialLines`, `WindowsSerialLine`, `PosixSerialLine`
 - [Web Service](#web-service): `WebServiceRequests`, `WebServiceSecureHash`, `WebServiceRoutes`, `WebServiceOperation`, `WebServiceApi`, `Http\*`
 - [EcrWireResponse](#ecrwireresponse)
@@ -1189,6 +1190,22 @@ final class SerialEcrChannel implements EcrChannel
 - `exchange()`: frames the body, opens the port, discards stale bytes left from an earlier exchange, writes the request and reads frames until one carries this request's nonce (a frame answering an earlier request is skipped, not believed). Throws `EcrChannelTimeout` after `$timeout` seconds. A failure to open, set up or drain the port before writing is an `EcrIOException` that reads as `Unreachable` (nothing was sent); a port that fails after the write reads as `ConnectionLost` (outcome unknown).
 - `$open` and `$presentNames` exist so a test can stand in for the port.
 
+### `UsbAccessoryEcrChannel`
+
+```php
+final class UsbAccessoryEcrChannel implements EcrChannel
+{
+    public function __construct(?UsbAccessoryBus $bus = null);
+}
+```
+
+The terminal down a USB cable with Android Open Accessory, with no COM port: pass it as `usbChannel` with `new UsbCableLink()`. `$bus` defaults to `WinUsbAccessoryBus` on Windows and `LibUsbAccessoryBus` elsewhere. `endpoint()` and `host()` are `USB cable`; `port()` is 0.
+
+- `probe()`: `null` when an accessory is on the bus or a device answers the protocol request; otherwise the reason. It opens the USB devices it finds to ask them, and never sends a request.
+- `exchange()`: switches the terminal to accessory mode when needed (up to 15 s for it to come back), opens the accessory interface, discards stale bytes, writes the frame and reads until a frame answers this nonce. **Throws** `EcrChannelTimeout` when no answer comes in time; `EcrIOException` otherwise. A failure before the write maps to `Unreachable`; one during or after it to `ConnectionLost`.
+
+The native buses have not been run against a real terminal: see [compatibility](compatibility.md).
+
 ### `EcrFrames`
 
 The wire framing: a 2-byte big-endian length followed by that many bytes of UTF-8 JSON. A TCP stream carries no message boundaries, so the header is what says where one message ends.
@@ -1229,6 +1246,16 @@ final class EcrChannelTimeout extends EcrIOException {}
 - **`EcrChannelTimeout`**: the terminal accepted the request and did not answer in time. This is not a refusal: the transaction may still have run.
 
 ---
+
+## USB accessory
+
+Namespace `AmwalPay\Ecr\Usb`. What `UsbAccessoryEcrChannel` is built on. Most tills only construct the channel.
+
+- `UsbAccessoryBus`: `unavailable(): ?string` (why this process cannot open a cable), `nothingPluggedIn(): string`, `list(): list<UsbPlug>` and `open(UsbPlug): UsbPipe`. The last two throw `EcrIOException`.
+- `UsbPipe`: `stillPresent()`, `controlIn()`, `controlOut()`, `bulkRead()`, `bulkWrite()`, `discardStale()` and `close()`. Reads return `null` and writes `-1` when the transfer times out or fails.
+- `UsbPlug`: `$id` (what the bus opens it by), `$vendorId`, `$productId`.
+- `WinUsbAccessoryBus`: Windows, through `setupapi`, `kernel32` and `winusb` by FFI. Needs the WinUSB driver already attached; it installs nothing. `vidPid(string $hardwareId): ?array` reads a hardware id.
+- `LibUsbAccessoryBus`: macOS and Linux, through libusb by FFI, loaded at run time. `hasAdbInterface(string $config): bool` and `bulkEndpoints(string $config): array` read a configuration descriptor.
 
 ## Serial (USB cable)
 
@@ -1462,7 +1489,7 @@ final class CurlHttpTransport implements HttpTransport
 }
 ```
 
-- **Throws** `\RuntimeException` from the constructor if the curl extension is not loaded. `post()` throws `HttpTransportException`, with `timedOut` set for a cURL timeout. Redirects are not followed.
+- **Throws** `\RuntimeException` from the constructor if the curl extension is not loaded. `post()` throws `HttpTransportException`, with `timedOut` set for a cURL timeout. Redirects are not followed. `WebServiceApi` passes its whole deadline as both timeouts: connecting has no limit of its own.
 
 ### `Http\HttpResponse`
 
@@ -1630,7 +1657,7 @@ final class JsonNumber
 final class JsonException extends \RuntimeException {}
 ```
 
-- `Json`: the one JSON reader and writer the SDK uses on the wire. It is strict on purpose. It keeps numbers exactly as written, and refuses repeated keys, trailing commas, comments, single quotes, invalid UTF-8, lone surrogates and a byte order mark. `MAX_DEPTH` matches System.Text.Json, which the Windows SDK parses with. `parseObject()` requires exactly one object. `compose()` builds the sorted `key=value&...` signing text of the scalar entries, leaving out `$excluded`.
+- `Json`: the one JSON reader and writer the SDK uses on the wire. It is strict on purpose. It keeps numbers exactly as written, and refuses repeated keys, trailing commas, comments, single quotes, invalid UTF-8, lone surrogates and a byte order mark. An answer from a terminal or the Hub is cleaned of invalid bytes (and on the Hub, a byte order mark) before it gets here, as the Windows SDK reads them. `MAX_DEPTH` matches System.Text.Json, which the Windows SDK parses with. `parseObject()` requires exactly one object. `compose()` builds the sorted `key=value&...` signing text of the scalar entries, leaving out `$excluded`.
 - `JsonObject`: keeps keys in order and values exactly as they arrived. Values are `string`, `bool`, `null`, `int`, `JsonNumber`, `JsonObject` or `JsonArray`. `set()` throws `\InvalidArgumentException` for a float or any other type, because money must never pass through a float. `str()` reads any scalar as text, and reads JSON `null` or a missing field as `""`. `flag()` counts only `true`/`false` (or their text); anything else is `false`.
 - `JsonNumber`: a JSON number kept exactly as written, because a signature is computed over the number's text.
 - `JsonException`: the text is not the single, strict JSON value it was expected to be.

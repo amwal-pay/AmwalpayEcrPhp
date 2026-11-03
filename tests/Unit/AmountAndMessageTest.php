@@ -43,6 +43,13 @@ final class AmountAndMessageTest extends TestCase
         self::assertSame($wire, Amount::of($amount)->toWire($digits));
     }
 
+    public function testATrailingNewlineIsNotANumberAndDurationsRoundToEven(): void
+    {
+        self::assertSame("123\n", \AmwalPay\Ecr\Amount::majorUnits("123\n", 3));
+        self::assertSame('2s', \AmwalPay\Ecr\EcrTerminal::formatDuration(2.5));
+        self::assertSame('1m 30s', \AmwalPay\Ecr\EcrTerminal::formatDuration(90.5));
+    }
+
     public function testWholeNumbersAreMajorUnits(): void
     {
         self::assertSame(5000, Amount::of(5)->toMinorUnits(3));

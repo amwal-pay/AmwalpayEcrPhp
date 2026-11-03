@@ -6,6 +6,7 @@ namespace AmwalPay\Ecr;
 
 use AmwalPay\Ecr\Channel\EcrChannel;
 use AmwalPay\Ecr\Internal\MerchantReference;
+use AmwalPay\Ecr\Internal\NetText;
 use AmwalPay\Ecr\Internal\Validate;
 use AmwalPay\Ecr\Link\EcrLink;
 use AmwalPay\Ecr\Link\LanLink;
@@ -41,7 +42,7 @@ final class EcrSessions
     {
         $issues = [];
 
-        $key = trim($rawSecureHashKey ?? $config->secureHashKey);
+        $key = NetText::trim($rawSecureHashKey ?? $config->secureHashKey);
         $keyValid = EcrConfig::isValidSecureHashKey($key);
         if ($key !== '' && !$keyValid) {
             $issues[] = 'Secure hash key must be an even-length hex string of at least 16 characters';

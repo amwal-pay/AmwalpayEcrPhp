@@ -213,8 +213,35 @@ sent. Linux and macOS need only `stty`, which the system has. The PHP user must 
 port (`dialout` group on Linux).
 
 A request is written only once the port is open and set up, so every failure before that is
-`Unreachable`. After the request is written, a lost port is `ConnectionLost` and no answer in time is
+`Unreachable`. Once the write has started, a lost port is `ConnectionLost` and no answer in time is
 `Timeout`: both are unknown outcomes, followed by one inquiry by reference like Wi-Fi.
+
+You need a driver installed on the system for the cable to work. Amwal provides it.
+
+### The USB accessory channel
+
+A terminal that speaks Android Open Accessory can be reached with no COM port at all. The till asks the
+terminal to switch to accessory mode, the terminal comes back on the bus under Google's ids, and the
+same framed messages travel over its bulk pipes:
+
+```php
+use AmwalPay\Ecr\Channel\UsbAccessoryEcrChannel;
+use AmwalPay\Ecr\Link\UsbCableLink;
+
+$plan = EcrSessions::plan(new UsbCableLink(), new EcrConfig(secureHashKey: $wifiKey));
+$session = EcrSessions::open('P653200085189', $plan, usbChannel: fn () => new UsbAccessoryEcrChannel());
+```
+
+It needs PHP's FFI extension everywhere. Windows uses WinUSB, and the driver must already be attached
+to the terminal: the SDK does not install one. macOS and Linux use libusb (`brew install libusb`, or
+the `libusb-1.0-0` package), and the PHP user needs access to the device. Without these the sale is
+`Unreachable` and nothing is sent. The probe talks to the USB devices it finds, asking each whether it
+speaks accessory mode, so a till with other USB devices attached sees that traffic.
+
+**Status:** the handshake and framing are tested over a scripted bus, and device listing and call
+marshalling were run on Windows. The native buses have not been run against a real terminal, and the
+libusb one has not been loaded at all. Prove it in SIT before relying on it; the COM port is the path
+the Windows SDK documents.
 
 ## 7. Operations
 

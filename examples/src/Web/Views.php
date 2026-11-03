@@ -11,6 +11,7 @@ use AmwalExample\Core\ResultPresenter;
 use AmwalExample\Core\SelectedTerminalConfig;
 use AmwalExample\Core\StateCompleted;
 use AmwalExample\Core\StateInquired;
+use AmwalExample\Core\StateSettled;
 use AmwalExample\Core\Terminal;
 use AmwalExample\Core\TransactionFormState;
 use AmwalPay\Ecr\EcrConfig;
@@ -41,6 +42,7 @@ final class Views
             'port' => $t->port,
             'terminalId' => $t->terminalId,
             'merchantId' => $t->merchantId,
+            'comPort' => $t->comPort,
             'displayName' => $t->displayName(),
             'connectionSummary' => $t->connectionSummary(),
             'supported' => $t->mode()->isSupportedInExample(),
@@ -62,6 +64,7 @@ final class Views
             'isReady' => $c->isReady(),
             'isSupported' => $c->isSupported(),
             'usesWebService' => $c->usesWebService(),
+            'supportsSettlement' => $c->mode()->isSupportedInExample(),
         ];
     }
 
@@ -104,7 +107,8 @@ final class Views
                         default => null,
                     },
                 ],
-                'canCloseReceipt' => $state instanceof StateCompleted,
+                // A finished sale, or a settlement summary the terminal is still showing.
+                'canCloseReceipt' => $state instanceof StateCompleted || $state instanceof StateSettled,
             ];
             // Same key order as the web sample's DialogView.
             $dialog = array_merge(array_flip(['headline', 'tone', 'amount', 'message', 'note', 'fields', 'hints', 'rawPayload', 'isUnknownOutcome', 'inquirableReference', 'unknownOutcomeWarning', 'offersReceipt', 'receiptNote', 'receipt', 'canCloseReceipt']), $dialog);
@@ -171,9 +175,11 @@ final class Views
                 'label' => $m->label(),
                 'ipBased' => $m->isIpBased(),
                 'supported' => $m->isSupportedInExample(),
-                'hint' => $m->isSupportedInExample() ? '' : 'Not available in this sample — the PHP SDK has no ' . ($m === EcrMode::UsbCable ? 'USB' : 'Bluetooth') . ' channel.',
+                'hint' => $m->isSupportedInExample() ? '' : 'Not available in this sample — Bluetooth has no channel.',
                 'note' => match ($m) {
-                    EcrMode::UsbCable => 'USB cable ECR cannot be exercised from the PHP sample: the PHP SDK opens Wi-Fi and Web Service only.',
+                    EcrMode::UsbCable => 'Plug the terminal in and choose its virtual serial port (MediaTek USB VCOM). '
+                        . 'Windows assigns the COM port from the device serial, and that number can change. '
+                        . 'The line is 115200 baud, 8 data bits, no parity, 1 stop bit. The signing key is the Wi-Fi key.',
                     EcrMode::Bluetooth => 'Bluetooth ECR cannot be exercised from this sample.',
                     default => '',
                 },

@@ -8,9 +8,11 @@ use AmwalExample\Core\AmountEntry;
 use AmwalExample\Core\EcrMode;
 use AmwalExample\Core\TerminalValidator;
 use AmwalExample\Core\TransactionFormState;
+use AmwalExample\Core\TransactionRequest;
 use AmwalPay\Ecr\EcrConfig;
 use AmwalPay\Ecr\EcrEnvironment;
 use AmwalPay\Ecr\EcrTransactionType;
+use AmwalPay\Ecr\Serial\SerialPorts;
 use BaconQrCode\Common\ErrorCorrectionLevel;
 use BaconQrCode\Renderer\Image\SvgImageBackEnd;
 use BaconQrCode\Renderer\ImageRenderer;
@@ -42,6 +44,8 @@ final class Api
         return match (true) {
             $method === 'GET' && $segments === ['meta'] => Response::json(200, Views::meta()),
 
+            $method === 'GET' && $segments === ['serial-ports'] => $this->serialPorts($query),
+
             $method === 'GET' && $segments === ['terminals'] => $this->terminals(),
             $method === 'POST' && $segments === ['terminals'] => $this->saveTerminal($body, null),
             $method === 'PUT' && \count($segments) === 2 && $segments[0] === 'terminals' => $this->app->terminals->findBySerial($a) === null
@@ -57,6 +61,8 @@ final class Api
 
             $method === 'GET' && $segments === ['transactions'] => Response::json(200, ['transactions' => array_map(Views::transaction(...), $this->app->registry->pending())]),
             $method === 'POST' && $segments === ['transactions'] => $this->start($body),
+            $method === 'POST' && $segments === ['transactions', 'settlement'] => $this->settle($body),
+            $method === 'POST' && $segments === ['transactions', 'reachability'] => $this->reachability($body),
             $method === 'GET' && \count($segments) === 2 && $segments[0] === 'transactions' => $this->find($a),
             $method === 'POST' && \count($segments) === 3 && $segments[0] === 'transactions' && $b === 'cancel' => $this->cancel($a),
             $method === 'POST' && \count($segments) === 3 && $segments[0] === 'transactions' && $b === 'inquire' => $this->inquire($a),
@@ -76,6 +82,17 @@ final class Api
 
     // ── Terminals ────────────────────────────────────────────────────
 
+    /** What is plugged in now, for the USB device picker. @param array<string, mixed> $query */
+    private function serialPorts(array $query): Response
+    {
+        $text = static fn (string $key): string => \is_string($query[$key] ?? null) ? $query[$key] : '';
+        $connected = SerialPorts::listFor($text('saved'), $text('serial'));
+        return Response::json(200, [
+            'ports' => array_map(static fn ($port): array => $port->toArray(), $connected->ports),
+            'selected' => $connected->selected,
+        ]);
+    }
+
     private function terminals(): Response
     {
         return Response::json(200, [
@@ -92,15 +109,15 @@ final class Api
         if ($mode === null) {
             return self::fields(['mode' => 'Choose an ECR mode']);
         }
-        [$name, $serial, $ip, $port, $terminalId, $merchantId] = array_map(
+        [$name, $serial, $ip, $port, $terminalId, $merchantId, $comPort] = array_map(
             static fn (string $k): string => \is_scalar($form[$k] ?? null) ? (string) $form[$k] : '',
-            ['name', 'serialNumber', 'ipAddress', 'port', 'terminalId', 'merchantId'],
+            ['name', 'serialNumber', 'ipAddress', 'port', 'terminalId', 'merchantId', 'comPort'],
         );
-        $errors = TerminalValidator::validate($name, $serial, $mode, $ip, $port, $terminalId, $merchantId);
+        $errors = TerminalValidator::validate($name, $serial, $mode, $ip, $port, $terminalId, $merchantId, $comPort);
         if ($errors !== []) {
             return self::fields($errors);
         }
-        $terminal = TerminalValidator::toTerminal($name, $serial, $mode, $ip, $port, $terminalId, $merchantId);
+        $terminal = TerminalValidator::toTerminal($name, $serial, $mode, $ip, $port, $terminalId, $merchantId, $comPort);
         $failure = $this->app->terminals->save($terminal, $originalSerial);
         // A duplicate serial is shown against the serial field, where it can be fixed.
         return $failure !== null ? self::fields(['serial' => $failure]) : Response::json(200, Views::terminal($terminal));
@@ -230,6 +247,41 @@ final class Api
         return $started[0] === 'busy'
             ? self::error(409, 'A transaction is already running on this terminal', $started[1])
             : Response::json(202, Views::transaction($started[1]));
+    }
+
+    /** Manual settlement: the selected terminal, nothing else. The page confirms first. @param array<string, mixed> $body */
+    private function settle(array $body): Response
+    {
+        $serial = self::text($body, 'terminalSerial');
+        $terminal = $serial !== '' ? $this->app->terminals->findBySerial($serial) : null;
+        if ($terminal === null) {
+            return self::fields(['terminal' => $serial !== '' ? 'Terminal ' . $serial . ' is no longer registered' : 'Choose a POS terminal']);
+        }
+        $config = $this->app->engine->resolveConfig($terminal);
+        if (!$config->mode()->isSupportedInExample()) {
+            return Response::json(422, ['errors' => new \stdClass(), 'message' => 'Settlement is not available for this terminal mode']);
+        }
+        if (!$config->isReady()) {
+            return Response::json(422, ['errors' => new \stdClass(), 'message' => implode("\n", $config->issues())]);
+        }
+        $started = $this->app->registry->start(
+            new TransactionRequest(EcrTransactionType::Settlement, $terminal->serialNumber),
+            $config->usesWebService(),
+            max(1, (int) $config->ecrConfig()->responseTimeout),
+        );
+        return $started[0] === 'busy'
+            ? self::error(409, 'A transaction is already running on this terminal', $started[1])
+            : Response::json(202, Views::transaction($started[1]));
+    }
+
+    /** Web Service only. Does not start a transaction. @param array<string, mixed> $body */
+    private function reachability(array $body): Response
+    {
+        $serial = self::text($body, 'terminalSerial');
+        if ($serial === '') {
+            return self::fields(['terminal' => 'Choose a POS terminal']);
+        }
+        return Response::json(200, $this->app->engine->checkWebServiceReachability($serial));
     }
 
     private function find(string $id): Response
